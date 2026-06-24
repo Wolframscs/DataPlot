@@ -1897,8 +1897,14 @@ class PlotterGUI:
                 
             save_df = df_to_plot[selected_cols]
             
-            # 计算下一个 sheet 名称
-            file_name = "Plot_Data.xlsx"
+            # 计算保存文件的完整路径，默认保存在当前打开文件的目录下
+            opened_file = self.file_path.get()
+            if opened_file and os.path.exists(opened_file):
+                save_dir = os.path.dirname(os.path.abspath(opened_file))
+                file_name = os.path.join(save_dir, "Plot_Data.xlsx")
+            else:
+                file_name = "Plot_Data.xlsx"
+                
             next_sheet = "sheet1"
             
             if os.path.exists(file_name):
