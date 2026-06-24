@@ -1,4 +1,4 @@
-; Inno Setup 脚本 - 用于将 DataPlot (PlotPostProcessing) 打包为 Windows 安装程序
+; Inno Setup 脚本 - 用于将 DataPlot 打包为 Windows 安装程序
 ; 使用前请下载并安装 Inno Setup (推荐版本 6.x)
 
 #define MyAppName "DataPlot"
@@ -18,6 +18,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=installer_output
 OutputBaseFilename=DataPlot_Setup
+SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

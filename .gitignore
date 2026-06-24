@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging (PyInstaller, setuptools, etc.)
+build/
+dist/
+*.egg-info/
+.eggs/
+*.spec
+
+# Inno Setup installer output
+installer_output/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Local settings / Cache
+settings.json
+*.log

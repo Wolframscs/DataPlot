@@ -8,7 +8,7 @@ if not os.path.exists('settings.json'):
 
 upx_dir = os.environ.get('UPX_DIR', '')
 cmd = [
-    'PlotPostProcessing.py',
+    'DataPlot.py',
     '--name=DataPlot',
     '--onedir',
     '--clean',
