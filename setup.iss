@@ -33,6 +33,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "dist\DataPlot\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; 依赖文件夹及全部内容
 Source: "dist\DataPlot\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 测试数据和预设配置
+Source: "TestData\*"; DestDir: "{app}\TestData"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "settings.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; 开始菜单快捷方式

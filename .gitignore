@@ -1,5 +1,6 @@
 # 排除所有子文件夹 (Ignore all directories)
 /*/
+!/TestData/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -12,6 +13,7 @@ __pycache__/
 # Distribution / packaging (PyInstaller, setuptools, etc.)
 build/
 dist/
+# TestData/
 *.egg-info/
 .eggs/
 *.spec
@@ -35,5 +37,9 @@ ENV/
 *.swp
 
 # Local settings / Cache
-settings.json
+# settings.json
 *.log
+.Update.md
+
+# Backup / Temporary monolithic files
+DataPlot_TOTAL.py

@@ -8,7 +8,7 @@ if not os.path.exists('settings.json'):
 
 upx_dir = os.environ.get('UPX_DIR', '')
 cmd = [
-    'DataPlot.py',
+    'DataPlot_main.py',
     '--name=DataPlot',
     '--onedir',
     '--clean',
@@ -28,7 +28,6 @@ cmd = [
     '--exclude-module=PyQt6',
     '--exclude-module=PySide2',
     '--exclude-module=PySide6',
-    '--exclude-module=scipy',
     '--exclude-module=IPython',
     '--exclude-module=notebook',
     '--exclude-module=sqlite3',
