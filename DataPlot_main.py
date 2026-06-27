@@ -2,6 +2,18 @@ import os
 import sys
 import tkinter as tk
 
+# 解决 Windows 控制台打印中文乱码或 UnicodeEncodeError 的编码问题
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 # Patch openpyxl datetime bug dynamically
 try:
     import openpyxl.descriptors.base

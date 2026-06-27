@@ -10,6 +10,18 @@ import os
 import sys
 import subprocess
 
+# 解决 Windows 控制台打印中文乱码或 UnicodeEncodeError 的编码问题
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 def run_cmd(cmd, desc):
     print(f"\n==================================================")
     print(f">>> 开始执行: {desc}")
@@ -27,37 +39,32 @@ def run_cmd(cmd, desc):
 def main():
     # 1. 运行 PyInstaller 打包
     python_exe = sys.executable
-    build_exe_cmd = [python_exe, "DataPlot_gui_exe.py"]
+    build_exe_cmd = f'"{python_exe}" DataPlot_gui_exe.py'
     
     if not run_cmd(build_exe_cmd, "使用 PyInstaller 打包绿色版可执行文件"):
         print("!!! 打包 EXE 失败，终止后续安装包构建流程。")
         sys.exit(1)
         
     # 2. 自动定位 Inno Setup 编译器 (ISCC.exe)
-    iscc_path = None
-    standard_paths = [
-        "ISCC",  # 若已加入系统环境变量 PATH
-        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-        r"C:\Program Files\Inno Setup 6\ISCC.exe",
-        r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
-        r"C:\Program Files\Inno Setup 5\ISCC.exe",
-    ]
+    import shutil
+    iscc_path = shutil.which("ISCC")
     
-    # 尝试在各位置进行测试
-    for path in standard_paths:
-        try:
-            # 运行最基础的帮助输出测试其是否可用
-            subprocess.run([path, "/?"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-            iscc_path = path
-            break
-        except Exception:
-            continue
+    if not iscc_path:
+        standard_paths = [
+            r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            r"C:\Program Files\Inno Setup 6\ISCC.exe",
+            r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
+            r"C:\Program Files\Inno Setup 5\ISCC.exe",
+        ]
+        for path in standard_paths:
+            if os.path.exists(path):
+                iscc_path = path
+                break
             
     # 3. 编译制作安装包
     if iscc_path:
         print(f"==> 成功找到 Inno Setup 编译器: {iscc_path}")
-        # 注意路径带有空格时两边加上双引号
-        build_setup_cmd = [f'"{iscc_path}"', "setup.iss"]
+        build_setup_cmd = f'"{iscc_path}" setup.iss'
         if run_cmd(build_setup_cmd, "编译 Inno Setup 安装包"):
             print("\n==================================================")
             print(" 🎉 一键生成可执行文件及安装包成功！")

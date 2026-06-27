@@ -1,5 +1,18 @@
 import PyInstaller.__main__
 import os
+import sys
+
+# 解决 Windows 控制台打印中文乱码或 UnicodeEncodeError 的编码问题
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 # 检查settings.json是否存在，如果不存在则创建一个空的
 if not os.path.exists('settings.json'):
@@ -20,6 +33,7 @@ cmd = [
     '--hidden-import=et_xmlfile',
     '--hidden-import=python_calamine',
     '--hidden-import=polars',
+    '--hidden-import=fastexcel',
     '--hidden-import=xlsxwriter',
     '--collect-all=openpyxl',
     '--optimize=2',
