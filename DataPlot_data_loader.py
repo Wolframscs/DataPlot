@@ -113,7 +113,7 @@ class DataLoaderMixin:
                     df.columns = [clean_column_name(col) for col in df.columns]
                     
                     result_df = pd.DataFrame()
-                    result_df['物理时间'] = df.iloc[:, 0]
+                    result_df['Time'] = df.iloc[:, 0]
                     
                     # Only read the first column as Time, and subsequent non-time, non-empty columns as data
                     for col_idx in range(1, len(df.columns)):

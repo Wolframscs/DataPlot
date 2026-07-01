@@ -100,6 +100,7 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
             style.configure('Big.TButton', font=default_font)
             style.configure('Custom.TLabelframe.Label', font=default_font)
             style.configure('Custom.TCheckbutton', font=default_font)
+            style.configure('Custom.TRadiobutton', font=default_font)
             
             self.root.option_add('*Font', default_font)
             label_style = {'width': 10, 'anchor': tk.W}
@@ -132,7 +133,7 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
             control_frame.grid_columnconfigure(2, weight=1)
             
             style = ttk.Style()
-            style.configure('Custom.TLabelframe.Label', font=('Microsoft YaHei', 12))
+            style.configure('Custom.TLabelframe.Label', font=('Microsoft YaHei', self.GUI_FONT_SIZE))
             
             file_type_frame = ttk.Frame(control_frame)
             file_type_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
@@ -140,15 +141,15 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
             ttk.Label(file_type_frame, text="文件类型:", **label_style).grid(row=0, column=0, sticky=tk.W)
             self.file_type = tk.StringVar(value="raw")
             
-            tk.Radiobutton(file_type_frame, text="FLOEFD", variable=self.file_type, value="raw", 
-                          command=self.update_file_type,
-                          font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=1)
-            tk.Radiobutton(file_type_frame, text="GENERAL", variable=self.file_type, value="processed", 
-                          command=self.update_file_type,
-                          font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=2)
-            tk.Radiobutton(file_type_frame, text="BATTERY", variable=self.file_type, value="battery", 
-                          command=self.update_file_type,
-                          font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=3)
+            ttk.Radiobutton(file_type_frame, text="FLOEFD", variable=self.file_type, value="raw", 
+                           command=self.update_file_type,
+                           style='Custom.TRadiobutton').grid(row=0, column=1, padx=5)
+            ttk.Radiobutton(file_type_frame, text="GENERAL", variable=self.file_type, value="processed", 
+                           command=self.update_file_type,
+                           style='Custom.TRadiobutton').grid(row=0, column=2, padx=5)
+            ttk.Radiobutton(file_type_frame, text="BATTERY", variable=self.file_type, value="battery", 
+                           command=self.update_file_type,
+                           style='Custom.TRadiobutton').grid(row=0, column=3, padx=5)
             
             # 统一输入控制表格（对齐 浏览、csv2xlsx、读取 按钮）
             input_grid_frame = ttk.Frame(control_frame)
@@ -252,10 +253,10 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
                        style='Big.TButton', width=10)
             self.battery_calc_btn.grid(row=1, column=4, columnspan=2, sticky=tk.W, padx=5)
 
-            self.cycle_compare_cb = tk.Checkbutton(self.battery_filter_frame, text="启用循环对比", 
+            self.cycle_compare_cb = ttk.Checkbutton(self.battery_filter_frame, text="启用循环对比", 
                                                    variable=self.cycle_compare_var, 
                                                    command=self.on_cycle_compare_toggle,
-                                                   font=('Microsoft YaHei', self.GUI_FONT_SIZE))
+                                                   style='Custom.TCheckbutton')
             self.cycle_compare_cb.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5)
 
             ttk.Label(self.battery_filter_frame, text="电压列:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=2, column=2, sticky=tk.W, padx=5)
@@ -322,9 +323,9 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
             compare_type_frame = ttk.Frame(self.cycle_compare_frame)
             compare_type_frame.grid(row=2, column=2, columnspan=4, sticky=tk.W, pady=2, padx=5)
             
-            tk.Radiobutton(compare_type_frame, text="常规对比", variable=self.current_compare_type, value="regular", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=0, padx=5)
-            tk.Radiobutton(compare_type_frame, text="dQ/dV", variable=self.current_compare_type, value="dqdv", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=1, padx=5)
-            tk.Radiobutton(compare_type_frame, text="dV/dQ", variable=self.current_compare_type, value="dvdq", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=2, padx=5)
+            ttk.Radiobutton(compare_type_frame, text="常规对比", variable=self.current_compare_type, value="regular", style='Custom.TRadiobutton').grid(row=0, column=0, padx=5)
+            ttk.Radiobutton(compare_type_frame, text="dQ/dV", variable=self.current_compare_type, value="dqdv", style='Custom.TRadiobutton').grid(row=0, column=1, padx=5)
+            ttk.Radiobutton(compare_type_frame, text="dV/dQ", variable=self.current_compare_type, value="dvdq", style='Custom.TRadiobutton').grid(row=0, column=2, padx=5)
             
             # Row 3: 循环Y轴 直接网格对齐 + 内部输入参数的子框架
             ttk.Label(self.cycle_compare_frame, text="循环Y轴:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=3, column=0, sticky=tk.W, padx=5)
@@ -352,7 +353,7 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
 
             # 单Y轴绘图选项框架
             self.plot_frame = ttk.LabelFrame(control_frame, text="绘图选项", padding="5", style='Custom.TLabelframe')
-            self.plot_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
+            self.plot_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
             
             self.plot_scrollbar = ttk.Scrollbar(self.plot_frame, orient="vertical")
             self.plot_canvas = tk.Canvas(self.plot_frame, borderwidth=0, highlightthickness=0, yscrollcommand=self.plot_scrollbar.set, height=360)
@@ -370,6 +371,12 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
             self.plot_canvas.bind("<Configure>", lambda e: self.plot_canvas.itemconfig(canvas_window, width=e.width))
             
             def _on_mousewheel(event):
+                try:
+                    first, last = self.plot_scrollbar.get()
+                    if first <= 0.0 and last >= 1.0:
+                        return
+                except Exception:
+                    pass
                 self.plot_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
             def _bind_mousewheel(event):
                 self.plot_canvas.bind_all("<MouseWheel>", _on_mousewheel)
@@ -656,7 +663,7 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
             # 状态信息显示区域
             status_frame = ttk.Frame(control_frame)
             status_frame.grid(row=10, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.S), pady=5)
-            control_frame.grid_rowconfigure(10, weight=1)
+            control_frame.grid_rowconfigure(10, weight=0)
             
             self.status_text = tk.Text(status_frame, height=6, width=40, font=default_font)
             self.status_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
@@ -719,7 +726,7 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
                 self.root.update_idletasks()
                 self.battery_filter_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
                 self.cycle_compare_frame.grid(row=6, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-                self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
+                self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
                 self.root.update_idletasks()
                 
                 max_req_width = self.plot_frame.master.winfo_reqwidth()
@@ -858,20 +865,27 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
         self.null_label.grid(row=0, column=4, sticky=tk.W, padx=(2, 2))
         self.null_entry.grid(row=0, column=5, sticky=tk.W, padx=(2, 10))
 
+        # Reset row weights of control_frame
+        for r in [5, 6, 7, 8, 10]:
+            self.control_frame.grid_rowconfigure(r, weight=0)
+
         if self.file_type.get() == "battery":
             self.plot_canvas.configure(height=360)
             self.battery_filter_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
             if self.cycle_compare_var.get():
                 self.cycle_compare_frame.grid(row=6, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-                self.plot_frame.grid(row=8, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E)) # 下移至 row 8
+                self.plot_frame.grid(row=8, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S)) # 下移至 row 8
+                self.control_frame.grid_rowconfigure(8, weight=1)
             else:
                 self.cycle_compare_frame.grid_forget()
-                self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E)) # 下移至 row 7
+                self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S)) # 下移至 row 7
+                self.control_frame.grid_rowconfigure(7, weight=1)
         else:
             self.plot_canvas.configure(height=520)
             self.battery_filter_frame.grid_forget()
             self.cycle_compare_frame.grid_forget()
-            self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E)) # 下移至 row 7
+            self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S)) # 下移至 row 7
+            self.control_frame.grid_rowconfigure(7, weight=1)
 
         if self.file_type.get() == "raw":
             self.sheet_combo.configure(state='readonly')

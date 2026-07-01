@@ -1,1 +1,1 @@
-{"font_family": "SimHei", "font_size": "12", "legend_y": "0.95", "legend_x_positions": "0, 0.3, 0", "frame_width": "3.0", "line_width": "2.0", "auto_downsample": true, "max_plot_points": "5e4", "legend_font_size": "12", "legend_cols": "2"}
+{"font_family": "SimHei", "font_size": "12", "legend_y": "0.95", "legend_x_positions": "0, 0.3, 0", "frame_width": "3.0", "line_width": "3.0", "auto_downsample": true, "max_plot_points": "5e4", "legend_font_size": "12", "legend_cols": "2"}
