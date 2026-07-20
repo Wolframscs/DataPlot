@@ -2,7 +2,7 @@ import os
 import openpyxl
 import pandas as pd
 import numpy as np
-from tkinter import messagebox
+from PySide6.QtWidgets import QMessageBox
 
 class ExcelExporterMixin:
     def save_cycle_compare_data(self):
@@ -19,7 +19,7 @@ class ExcelExporterMixin:
                               ("时间列", time_col_name), ("电压列", voltage_col_name), 
                               ("电流列", current_col_name)]:
                 if not col or col not in self.result_df.columns:
-                    messagebox.showwarning("警告", f"未找到{name} '{col}'，无法计算保存。")
+                    QMessageBox.warning(self, "警告", f"未找到{name} '{col}'，无法计算保存。")
                     return
 
             try:
@@ -30,7 +30,7 @@ class ExcelExporterMixin:
             cycle_str = self.cycle_compare_range_var.get()
             cycles = self.parse_cycles(cycle_str, max_cycle)
             if not cycles:
-                messagebox.showwarning("警告", "未指定有效的循环号范围。")
+                QMessageBox.warning(self, "警告", "未指定有效的循环号范围。")
                 return
 
             step_val = self.step_filter.get()
@@ -205,7 +205,7 @@ class ExcelExporterMixin:
                 save_dfs.append(c_df)
 
             if not save_dfs:
-                messagebox.showwarning("警告", "没有可保存的计算数据。")
+                QMessageBox.warning(self, "警告", "没有可保存的计算数据。")
                 return
 
             save_dfs_reset = [df.reset_index(drop=True) for df in save_dfs]
@@ -243,16 +243,16 @@ class ExcelExporterMixin:
                 with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
                     final_df.to_excel(writer, sheet_name=next_sheet, index=False)
 
-            messagebox.showinfo("成功", f"循环对比数据已保存至 {os.path.abspath(file_name)} 中的 {next_sheet}！")
+            QMessageBox.information(self, "成功", f"循环对比数据已保存至 {os.path.abspath(file_name)} 中的 {next_sheet}！")
 
         except Exception as e:
-            messagebox.showerror("错误", f"保存循环对比数据失败: {str(e)}")
+            QMessageBox.critical(self, "错误", f"保存循环对比数据失败: {str(e)}")
 
     def save_plot_data(self):
         """将当前绘图数据保存为 xlsx 文件"""
         try:
             if self.result_df is None:
-                messagebox.showwarning("警告", "当前无有效数据，请先载入并计算数据！")
+                QMessageBox.warning(self, "警告", "当前无有效数据，请先载入并计算数据！")
                 return
             
             if self.file_type.get() == "battery" and self.cycle_compare_var.get():
@@ -261,7 +261,7 @@ class ExcelExporterMixin:
             
             x_col = self.x_axis.get()
             if not x_col:
-                messagebox.showwarning("警告", "请先选择 X 轴数据！")
+                QMessageBox.warning(self, "警告", "请先选择 X 轴数据！")
                 return
                 
             y1_cols = self.y_selections[0]
@@ -270,7 +270,7 @@ class ExcelExporterMixin:
             all_y_cols = y1_cols + y2_cols + y3_cols
             
             if not all_y_cols:
-                messagebox.showwarning("警告", "请先选择至少一个 Y 轴进行绘图！")
+                QMessageBox.warning(self, "警告", "请先选择至少一个 Y 轴进行绘图！")
                 return
                 
             df_to_plot = self.result_df
@@ -307,7 +307,7 @@ class ExcelExporterMixin:
                                 pass
             
             if df_to_plot.empty:
-                messagebox.showwarning("警告", "筛选后的绘图数据为空，无法保存！")
+                QMessageBox.warning(self, "警告", "筛选后的绘图数据为空，无法保存！")
                 return
                 
             selected_cols = []
@@ -318,7 +318,7 @@ class ExcelExporterMixin:
                     selected_cols.append(col)
                     
             if not selected_cols:
-                messagebox.showwarning("警告", "未在数据中匹配到选中的列！")
+                QMessageBox.warning(self, "警告", "未在数据中匹配到选中的列！")
                 return
                 
             save_df = df_to_plot[selected_cols].copy()
@@ -365,9 +365,9 @@ class ExcelExporterMixin:
                 with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
                     save_df.to_excel(writer, sheet_name=next_sheet, index=False)
                     
-            messagebox.showinfo("成功", f"绘图数据已保存至 {os.path.abspath(file_name)} 中的 {next_sheet}！")
+            QMessageBox.information(self, "成功", f"绘图数据已保存至 {os.path.abspath(file_name)} 中的 {next_sheet}！")
             self.logger.info(f"保存绘图数据成功: {file_name} -> {next_sheet}")
             
         except Exception as e:
             self.logger.error(f"保存绘图数据时发生异常: {str(e)}")
-            messagebox.showerror("错误", f"保存数据失败: {str(e)}")
+            QMessageBox.critical(self, "错误", f"保存数据失败: {str(e)}")

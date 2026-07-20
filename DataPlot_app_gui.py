@@ -4,10 +4,29 @@ import queue
 import logging
 import gc
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QFormLayout, QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton,
+    QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QTextEdit, QMessageBox, QFileDialog,
+    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout
+)
+from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtGui import QIcon, QFont
+
+class CustomLineEdit(QLineEdit):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    def get(self):
+        return self.text()
+
+# Redirect QLineEdit to CustomLineEdit to support Tkinter get() method
+QLineEdit = CustomLineEdit
+
+import matplotlib
+matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
+
 import pandas as pd
 import openpyxl
 
@@ -26,16 +45,141 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
-    def __init__(self, root):
-        self.root = root
-        self.root.title("DataPlot")
-        try:
-            icon_path = resource_path('icon.ico')
-            if os.path.exists(icon_path):
-                self.root.iconbitmap(icon_path)
-        except Exception:
-            pass
+class Var:
+    def __init__(self, value=None):
+        self._value = value
+        self._callbacks = []
+
+    def get(self):
+        return self._value
+
+    def set(self, val):
+        self._value = val
+        for cb in list(self._callbacks):
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def trace_add(self, mode, callback):
+        self._callbacks.append(callback)
+        return callback
+
+class CustomComboBox(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentIndexChanged.connect(self._update_combo_tooltip)
+    
+    def _update_combo_tooltip(self):
+        self.setToolTip(self.currentText())
+        
+    def addItem(self, text, userData=None):
+        super().addItem(text, userData)
+        self.setItemData(self.count() - 1, text, Qt.ToolTipRole)
+        if self.count() == 1:
+            self._update_combo_tooltip()
+
+    def addItems(self, texts):
+        for text in texts:
+            self.addItem(text)
+
+    def __setitem__(self, key, value):
+        if key == 'values':
+            self.clear()
+            self.addItems([str(v) for v in value])
+
+    def set(self, value):
+        val_str = str(value)
+        idx = self.findText(val_str)
+        if idx >= 0:
+            self.setCurrentIndex(idx)
+        else:
+            self.setCurrentText(val_str)
+        self._update_combo_tooltip()
+
+class CustomListWidget(QListWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self._callbacks = []
+        self.itemSelectionChanged.connect(self._on_selection_changed)
+
+    def bind(self, event, callback):
+        if event == '<<ListboxSelect>>':
+            self._callbacks.append(callback)
+
+    def _on_selection_changed(self):
+        class MockEvent:
+            def __init__(self, widget):
+                self.widget = widget
+        event = MockEvent(self)
+        for cb in self._callbacks:
+            try:
+                cb(event)
+            except Exception:
+                pass
+
+    def selection_clear(self, start=0, end=None):
+        self.clearSelection()
+
+    def selection_set(self, index):
+        item = self.item(index)
+        if item:
+            item.setSelected(True)
+
+    def curselection(self):
+        indices = []
+        for i in range(self.count()):
+            if self.item(i).isSelected():
+                indices.append(i)
+        return tuple(indices)
+
+    def get(self, index):
+        item = self.item(index)
+        return item.text() if item else ""
+
+    def size(self):
+        return self.count()
+
+    def delete(self, start=0, end=None):
+        self.clear()
+
+    def insert(self, index, item_text):
+        item = QListWidgetItem(item_text)
+        item.setToolTip(item_text)
+        self.addItem(item)
+
+def bind_lineedit(widget, var):
+    widget.setText(str(var.get() if var.get() is not None else ""))
+    widget.textChanged.connect(var.set)
+    var.trace_add('write', lambda: widget.setText(str(var.get())) if widget.text() != str(var.get()) else None)
+
+def bind_checkbox(widget, var):
+    widget.setChecked(bool(var.get()))
+    widget.toggled.connect(var.set)
+    var.trace_add('write', lambda: widget.setChecked(bool(var.get())) if widget.isChecked() != bool(var.get()) else None)
+
+def bind_combobox(widget, var):
+    def on_combobox_changed(text):
+        var.set(text)
+    widget.currentTextChanged.connect(on_combobox_changed)
+    def on_var_changed():
+        val = str(var.get() if var.get() is not None else "")
+        idx = widget.findText(val)
+        if idx >= 0 and widget.currentIndex() != idx:
+            widget.setCurrentIndex(idx)
+    var.trace_add('write', on_var_changed)
+    on_var_changed()
+
+class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("DataPlot")
+        
+        icon_path = resource_path('icon.ico')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            
         self.result_df = None
         self.CHUNK_SIZE = 100000
         self.msg_queue = queue.Queue()
@@ -48,700 +192,1002 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
         )
         self.logger = logging.getLogger('DataPlot')
         
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        # 定义线型选项
+        self.line_styles_dict = {
+            '实线': '-',
+            '虚线': '--',
+            '点线': ':',
+            '点划线': '-.',
+        }
         
-        try:
-            # 定义线型选项
-            self.line_styles_dict = {
-                '实线': '-',
-                '虚线': '--',
-                '点线': ':',
-                '点划线': '-.',
+        self.line_styles = []
+        self.color_schemes = []
+        
+        self.version = "1.0.0"
+        self._update_timer = None
+        self._last_plot_time = 0
+        self._is_loading_settings = False
+        self._is_syncing_x = False
+        
+        # Initialize Variables using Var wrapper
+        self.auto_downsample = Var(True)
+        self.max_plot_points = Var("None")
+        self.legend_font_size = Var("18")
+        self.legend_cols = Var("1")
+        self.x_min_var = Var("")
+        self.x_max_var = Var("")
+        
+        self.file_type = Var("raw")
+        self.file_path = Var("")
+        self.sheet_name = Var("")
+        self.skip_rows_var = Var("3")
+        self.start_skip_var = Var("8")
+        self.start_row = Var("1")
+        
+        self.cycle_col = Var("")
+        self.step_col = Var("")
+        self.time_col = Var("")
+        self.voltage_col = Var("")
+        self.current_col = Var("")
+        self.cycle_compare_var = Var(False)
+        self.cycle_compare_range_var = Var("1, max, 10")
+        self.time_step_var = Var("10")
+        self.filter_type_var = Var("无")
+        self.filter_window_var = Var("15")
+        self.sg_poly_var = Var("2")
+        self.compare_x_var = Var("容量（计算）")
+        self.current_compare_type = Var("regular")
+        self.cc_polarity_var = Var("正")
+        self.dqdv_min_var = Var("")
+        self.dqdv_max_var = Var("")
+        self.dqdv_title_var = Var("")
+        self.voltage_scale_var = Var("1")
+        self.current_scale_var = Var("1")
+        self.x_axis = Var("")
+        
+        self.cycle_filter = Var("全部")
+        self.step_filter = Var("全部")
+        
+        self.font_family = Var("SimHei")
+        self.legend_y = Var("1.02")
+        self.legend_x_positions_str = Var("0, 0.3, 0.7")
+        self.legend_visible = Var(True)
+        self.font_size = Var("18")
+        self.frame_width = Var("1.5")
+        self.line_width = Var("1.5")
+        
+        # Advanced margin variables
+        self.adv_left_margin_mult = Var("4.5")
+        self.adv_left_margin_min_px = Var("80")
+        self.adv_left_margin_min_pct = Var("0.08")
+        
+        self.adv_y3_margin_mult = Var("9.5")
+        self.adv_y3_margin_min_px = Var("170")
+        self.adv_y3_max_right_pct = Var("0.83")
+        
+        self.adv_y2_margin_mult = Var("4.0")
+        self.adv_y2_margin_min_px = Var("75")
+        self.adv_y2_max_right_pct = Var("0.93")
+        
+        self.adv_y1_margin_mult = Var("1.5")
+        self.adv_y1_margin_min_px = Var("20")
+        self.adv_y1_max_right_pct = Var("0.97")
+        
+        self.y_settings = []
+        default_y_configs = [
+            {'min': '20', 'max': '60', 'title': 'Temperature/℃'},
+            {'min': '20', 'max': '60', 'title': 'Temperature/℃'},
+            {'min': '0', 'max': '150', 'title': 'HeatingPower/W'}
+        ]
+        for i in range(3):
+            config = default_y_configs[i]
+            settings = {
+                'min': Var(config['min']),
+                'max': Var(config['max']),
+                'title': Var(config['title'])
             }
-            
-            self.line_styles = []
-            
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
-            
-            scale_factor = min(screen_width / 1920.0, screen_height / 1080.0)
-            scale_factor = max(0.8, min(scale_factor, 2.0))
-            
-            window_width = int(screen_width * 0.9)
-            window_height = int(screen_height * 0.8)
-            
-            window_width = max(1100, min(window_width, screen_width - 100))
-            window_height = max(750, min(window_height, screen_height - 100))
-            
-            x_offset = (screen_width - window_width) // 2
-            y_offset = (screen_height - window_height) // 2
-            self.root.geometry(f"{window_width}x{window_height}+{x_offset}+{y_offset}")
-            
-            self.GUI_FONT_SIZE = max(10, min(18, int(12 * scale_factor)))
-            default_font = ('Microsoft YaHei', self.GUI_FONT_SIZE)
-            
-            self.fig_w = max(8.0, min(16.0, 12.0 * scale_factor))
-            self.fig_h = max(5.0, min(11.0, 8.0 * scale_factor))
+            self.y_settings.append(settings)
 
-            self.root.grid_rowconfigure(0, weight=1)
-            self.root.grid_columnconfigure(0, weight=1)
+        self.init_ui()
+        self.load_settings()
+        self._last_file_type = self.file_type.get()
+        
+        self.update_file_type()
+        self.update_font_and_plot()
+        
+        # Connect Variable Traces
+        self.font_family.trace_add('write', lambda *args: self.update_font_and_plot())
+        self.font_size.trace_add('write', lambda *args: self.update_font_and_plot())
+        self.legend_y.trace_add('write', lambda *args: self.update_legend_only())
+        self.legend_font_size.trace_add('write', lambda *args: self.update_legend_only())
+        self.legend_cols.trace_add('write', lambda *args: self.update_legend_only())
+        self.compare_x_var.trace_add('write', self.sync_compare_x)
+        self.x_axis.trace_add('write', self.sync_regular_x)
+        self.current_compare_type.trace_add('write', self.on_compare_type_changed)
+        
+        QTimer.singleShot(100, self.check_queue)
+        self.logger.info("应用程序启动成功")
 
-            self.LABEL_WIDTH = 8
-            self.SMALL_LABEL_WIDTH = 6
-            self.Y_LABEL_WIDTH = 6
-            self.ENTRY_WIDTH = 8
-            self.COMBO_WIDTH = 6
-            self.TITLE_ENTRY_WIDTH = 15
-            self.SETTING_LABEL_WIDTH = 8
-            self.LABEL_PADX = (8, 0)
-            self.WIDGET_PADX = 1
-            
-            style = ttk.Style()
-            style.configure('Big.TButton', font=default_font)
-            style.configure('Custom.TLabelframe.Label', font=default_font)
-            style.configure('Custom.TCheckbutton', font=default_font)
-            style.configure('Custom.TRadiobutton', font=default_font)
-            
-            self.root.option_add('*Font', default_font)
-            label_style = {'width': 10, 'anchor': tk.W}
-            
-            self.version = "1.0.0"
-            self._update_timer = None
-            self._last_plot_time = 0
-            self._is_loading_settings = False
-            self._is_syncing_x = False
-            self.auto_downsample = tk.BooleanVar(value=True)
-            self.max_plot_points = tk.StringVar(value="10000")
-            self.legend_font_size = tk.StringVar(value="12")
-            self.legend_cols = tk.StringVar(value="1")
-            self.x_min_var = tk.StringVar(value="")
-            self.x_max_var = tk.StringVar(value="")
-            
-            # 创建主框架
-            self.main_frame = ttk.Frame(root, padding="10")
-            self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-            
-            self.main_frame.grid_rowconfigure(0, weight=1)
-            self.main_frame.grid_columnconfigure(1, weight=1)
-            
-            # 创建左侧控制面板框架
-            control_frame = ttk.Frame(self.main_frame)
-            self.control_frame = control_frame
-            control_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
-            control_frame.grid_columnconfigure(0, weight=1)
-            control_frame.grid_columnconfigure(1, weight=1)
-            control_frame.grid_columnconfigure(2, weight=1)
-            
-            style = ttk.Style()
-            style.configure('Custom.TLabelframe.Label', font=('Microsoft YaHei', self.GUI_FONT_SIZE))
-            
-            file_type_frame = ttk.Frame(control_frame)
-            file_type_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
-            
-            ttk.Label(file_type_frame, text="文件类型:", **label_style).grid(row=0, column=0, sticky=tk.W)
-            self.file_type = tk.StringVar(value="raw")
-            
-            ttk.Radiobutton(file_type_frame, text="FLOEFD", variable=self.file_type, value="raw", 
-                           command=self.update_file_type,
-                           style='Custom.TRadiobutton').grid(row=0, column=1, padx=5)
-            ttk.Radiobutton(file_type_frame, text="GENERAL", variable=self.file_type, value="processed", 
-                           command=self.update_file_type,
-                           style='Custom.TRadiobutton').grid(row=0, column=2, padx=5)
-            ttk.Radiobutton(file_type_frame, text="BATTERY", variable=self.file_type, value="battery", 
-                           command=self.update_file_type,
-                           style='Custom.TRadiobutton').grid(row=0, column=3, padx=5)
-            
-            # 统一输入控制表格（对齐 浏览、csv2xlsx、读取 按钮）
-            input_grid_frame = ttk.Frame(control_frame)
-            input_grid_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
-            
-            # Row 0: 文件路径
-            ttk.Label(input_grid_frame, text="文件路径:", **label_style).grid(row=0, column=0, sticky=tk.W)
-            self.file_path = tk.StringVar()
-            self.file_entry = ttk.Entry(input_grid_frame, textvariable=self.file_path, width=30,
-                                      font=('Microsoft YaHei', self.GUI_FONT_SIZE))
-            self.file_entry.grid(row=0, column=1, padx=10, sticky=tk.W)
-            self.browse_btn = ttk.Button(input_grid_frame, text="浏览", command=self.browse_file,
-                      style='Big.TButton', width=10)
-            self.browse_btn.grid(row=0, column=2, sticky=tk.W)
-            
-            # Row 1: 表格名称
-            ttk.Label(input_grid_frame, text="表格名称:", **label_style).grid(row=1, column=0, sticky=tk.W)
-            self.sheet_name = tk.StringVar()
-            self.sheet_combo = ttk.Combobox(input_grid_frame, textvariable=self.sheet_name,
-                                          width=30, state='readonly', 
-                                          font=('Microsoft YaHei', self.GUI_FONT_SIZE))
-            self.sheet_combo.grid(row=1, column=1, sticky=tk.W, padx=10)
-            self.process_btn = ttk.Button(input_grid_frame, text="读取", command=self.process_data,
-                                          style='Big.TButton', width=10)
-            self.process_btn.grid(row=1, column=2, sticky=tk.W)
-            
-            # Row 2: 参数与 csv2xlsx 按钮
-            self.start_row_frame = ttk.Frame(input_grid_frame)
-            self.start_row_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W)
-            
-            # SKIP (只对 raw 可见)
-            self.skip_label = ttk.Label(self.start_row_frame, text="SKIP:", width=5, anchor=tk.W)
-            self.skip_rows_var = tk.StringVar(value="3")
-            self.skip_entry = ttk.Entry(self.start_row_frame, textvariable=self.skip_rows_var, width=6)
-            
-            # NULL (只对 raw 可见)
-            self.null_label = ttk.Label(self.start_row_frame, text="NULL:", width=6, anchor=tk.W)
-            self.start_skip_var = tk.StringVar(value="8")
-            self.null_entry = ttk.Entry(self.start_row_frame, textvariable=self.start_skip_var, width=6)
-            
-            # 起始行
-            self.start_row_label = ttk.Label(self.start_row_frame, text="起始行:", width=8, anchor=tk.W)
-            self.start_row = tk.StringVar(value="1")
-            self.start_row_entry = ttk.Entry(self.start_row_frame, textvariable=self.start_row, width=6)
-            
-            # csv2xlsx 按钮 (与 读取 垂直对齐)
-            self.csv2xlsx_btn = ttk.Button(input_grid_frame, text="csv2xlsx", command=self.convert_csv_to_xlsx,
-                                           style='Big.TButton', width=10)
-            self.csv2xlsx_btn.grid(row=2, column=2, sticky=tk.W)
-            
-            # 电池数据配置框架
-            self.battery_filter_frame = ttk.LabelFrame(control_frame, text="电池数据配置", padding="5", style='Custom.TLabelframe')
-            
-            self.cycle_col = tk.StringVar()
-            self.step_col = tk.StringVar()
-            self.time_col = tk.StringVar()
-            self.voltage_col = tk.StringVar()
-            self.current_col = tk.StringVar()
-            self.cycle_compare_var = tk.BooleanVar(value=False)
-            self.cycle_compare_range_var = tk.StringVar(value="1, max, 10")
-            self.time_step_var = tk.StringVar(value="10")
-            self.filter_type_var = tk.StringVar(value="无")
-            self.filter_window_var = tk.StringVar(value="15")
-            self.sg_poly_var = tk.StringVar(value="2")
-            self.compare_x_var = tk.StringVar(value="容量（计算）")
-            self.current_compare_type = tk.StringVar(value="regular")
-            self.cc_polarity_var = tk.StringVar(value="正")
-            self.dqdv_min_var = tk.StringVar(value="")
-            self.dqdv_max_var = tk.StringVar(value="")
-            self.dqdv_title_var = tk.StringVar(value="")
-            self.voltage_scale_var = tk.StringVar(value="1")
-            self.current_scale_var = tk.StringVar(value="1")
-            
-            ttk.Label(self.battery_filter_frame, text="循环列:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=0, sticky=tk.W, padx=5)
-            self.cycle_col_combo = ttk.Combobox(self.battery_filter_frame, textvariable=self.cycle_col, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.cycle_col_combo.grid(row=0, column=1, sticky=tk.W, padx=5)
-            self.cycle_col_combo.bind('<<ComboboxSelected>>', self.on_cycle_col_changed)
-            
-            ttk.Label(self.battery_filter_frame, text="工步列:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=2, sticky=tk.W, padx=5)
-            self.step_col_combo = ttk.Combobox(self.battery_filter_frame, textvariable=self.step_col, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.step_col_combo.grid(row=0, column=3, sticky=tk.W, padx=5)
-            self.step_col_combo.bind('<<ComboboxSelected>>', self.on_step_col_changed)
-            
-            ttk.Label(self.battery_filter_frame, text="时间列:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=4, sticky=tk.W, padx=5)
-            self.time_col_combo = ttk.Combobox(self.battery_filter_frame, textvariable=self.time_col, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.time_col_combo.grid(row=0, column=5, sticky=tk.W, padx=5)
-            self.time_col_combo.bind('<<ComboboxSelected>>', self.on_time_col_changed)
-
-            ttk.Label(self.battery_filter_frame, text="循环筛选:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=1, column=0, sticky=tk.W, padx=5)
-            self.cycle_filter = tk.StringVar(value="全部")
-            self.cycle_filter_combo = ttk.Combobox(self.battery_filter_frame, textvariable=self.cycle_filter, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.cycle_filter_combo.grid(row=1, column=1, sticky=tk.W, padx=5)
-            
-            ttk.Label(self.battery_filter_frame, text="工步筛选:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=1, column=2, sticky=tk.W, padx=5)
-            self.step_filter = tk.StringVar(value="全部")
-            self.step_filter_combo = ttk.Combobox(self.battery_filter_frame, textvariable=self.step_filter, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.step_filter_combo.grid(row=1, column=3, sticky=tk.W, padx=5)
-            self.step_filter_combo.bind('<<ComboboxSelected>>', lambda e: [self.update_listboxes(), self.delayed_update()])
-            
-            self.battery_calc_btn = ttk.Button(self.battery_filter_frame, text="应用", command=self.update_plot,
-                       style='Big.TButton', width=10)
-            self.battery_calc_btn.grid(row=1, column=4, columnspan=2, sticky=tk.W, padx=5)
-
-            self.cycle_compare_cb = ttk.Checkbutton(self.battery_filter_frame, text="启用循环对比", 
-                                                   variable=self.cycle_compare_var, 
-                                                   command=self.on_cycle_compare_toggle,
-                                                   style='Custom.TCheckbutton')
-            self.cycle_compare_cb.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5)
-
-            ttk.Label(self.battery_filter_frame, text="电压列:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=2, column=2, sticky=tk.W, padx=5)
-            self.voltage_col_combo = ttk.Combobox(self.battery_filter_frame, textvariable=self.voltage_col, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.voltage_col_combo.grid(row=2, column=3, sticky=tk.W, padx=5)
-            self.voltage_col_combo.bind('<<ComboboxSelected>>', lambda e: self.delayed_update())
-
-            ttk.Label(self.battery_filter_frame, text="电流列:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=2, column=4, sticky=tk.W, padx=5)
-            self.current_col_combo = ttk.Combobox(self.battery_filter_frame, textvariable=self.current_col, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.current_col_combo.grid(row=2, column=5, sticky=tk.W, padx=5)
-            self.current_col_combo.bind('<<ComboboxSelected>>', lambda e: self.delayed_update())
-
-            # Row 3: 电压/电流比例因子
-            ttk.Label(self.battery_filter_frame, text="电压比例:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=3, column=2, sticky=tk.W, padx=5)
-            self.voltage_scale_entry = ttk.Entry(self.battery_filter_frame, textvariable=self.voltage_scale_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.voltage_scale_entry.grid(row=3, column=3, sticky=tk.W, padx=5)
-            self.voltage_scale_entry.bind('<Return>', lambda e: self.delayed_update())
-            
-            ttk.Label(self.battery_filter_frame, text="电流比例:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=3, column=4, sticky=tk.W, padx=5)
-            self.current_scale_entry = ttk.Entry(self.battery_filter_frame, textvariable=self.current_scale_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.current_scale_entry.grid(row=3, column=5, sticky=tk.W, padx=5)
-            self.current_scale_entry.bind('<Return>', lambda e: self.delayed_update())
-
-            # 循环对比配置框架
-            self.cycle_compare_frame = ttk.LabelFrame(control_frame, text="循环对比配置", padding="5", style='Custom.TLabelframe')
-            
-            ttk.Label(self.cycle_compare_frame, text="对比范围:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=0, sticky=tk.W, padx=5)
-            self.cycle_range_entry = ttk.Entry(self.cycle_compare_frame, textvariable=self.cycle_compare_range_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=12)
-            self.cycle_range_entry.grid(row=0, column=1, sticky=tk.W, padx=5)
-            self.cycle_range_entry.bind('<Return>', lambda e: self.delayed_update())
-            
-            ttk.Label(self.cycle_compare_frame, text="步长(TimeStep):", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=2, sticky=tk.W, padx=5)
-            self.time_step_entry = ttk.Entry(self.cycle_compare_frame, textvariable=self.time_step_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=6)
-            self.time_step_entry.grid(row=0, column=3, sticky=tk.W, padx=5)
-            self.time_step_entry.bind('<Return>', lambda e: self.delayed_update())
-
-            ttk.Label(self.cycle_compare_frame, text="CC极性:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=4, sticky=tk.W, padx=5)
-            self.cc_polarity_combo = ttk.Combobox(self.cycle_compare_frame, textvariable=self.cc_polarity_var, values=["正", "负"], state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=4)
-            self.cc_polarity_combo.grid(row=0, column=5, sticky=tk.W, padx=5)
-            self.cc_polarity_combo.bind('<<ComboboxSelected>>', lambda e: self.delayed_update())
-            
-            ttk.Label(self.cycle_compare_frame, text="滤波方式:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=1, column=0, sticky=tk.W, padx=5)
-            self.filter_type_combo = ttk.Combobox(self.cycle_compare_frame, textvariable=self.filter_type_var, values=["无", "Savitzky-Golay", "移动平均", "中值滤波"], state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=12)
-            self.filter_type_combo.grid(row=1, column=1, sticky=tk.W, padx=5)
-            self.filter_type_combo.bind('<<ComboboxSelected>>', lambda e: self.delayed_update())
-            
-            ttk.Label(self.cycle_compare_frame, text="窗口大小:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=1, column=2, sticky=tk.W, padx=5)
-            self.filter_window_entry = ttk.Entry(self.cycle_compare_frame, textvariable=self.filter_window_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=6)
-            self.filter_window_entry.grid(row=1, column=3, sticky=tk.W, padx=5)
-            self.filter_window_entry.bind('<Return>', lambda e: self.delayed_update())
-            
-            ttk.Label(self.cycle_compare_frame, text="SG阶数:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=1, column=4, sticky=tk.W, padx=5)
-            self.sg_poly_combo = ttk.Combobox(self.cycle_compare_frame, textvariable=self.sg_poly_var, values=["2", "3", "4"], state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=4)
-            self.sg_poly_combo.grid(row=1, column=5, sticky=tk.W, padx=5)
-            self.sg_poly_combo.bind('<<ComboboxSelected>>', lambda e: self.delayed_update())
-            
-            # Row 2: 循环X轴 直接网格对齐
-            ttk.Label(self.cycle_compare_frame, text="循环X轴:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=2, column=0, sticky=tk.W, padx=5)
-            self.compare_x_combo = ttk.Combobox(self.cycle_compare_frame, textvariable=self.compare_x_var, state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=12)
-            self.compare_x_combo.grid(row=2, column=1, sticky=tk.W, padx=5)
-            self.compare_x_combo.bind('<<ComboboxSelected>>', lambda e: self.delayed_update())
-            
-            # 对比类型选择子框架
-            compare_type_frame = ttk.Frame(self.cycle_compare_frame)
-            compare_type_frame.grid(row=2, column=2, columnspan=4, sticky=tk.W, pady=2, padx=5)
-            
-            ttk.Radiobutton(compare_type_frame, text="常规对比", variable=self.current_compare_type, value="regular", style='Custom.TRadiobutton').grid(row=0, column=0, padx=5)
-            ttk.Radiobutton(compare_type_frame, text="dQ/dV", variable=self.current_compare_type, value="dqdv", style='Custom.TRadiobutton').grid(row=0, column=1, padx=5)
-            ttk.Radiobutton(compare_type_frame, text="dV/dQ", variable=self.current_compare_type, value="dvdq", style='Custom.TRadiobutton').grid(row=0, column=2, padx=5)
-            
-            # Row 3: 循环Y轴 直接网格对齐 + 内部输入参数的子框架
-            ttk.Label(self.cycle_compare_frame, text="循环Y轴:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=3, column=0, sticky=tk.W, padx=5)
-            
-            compare_row3_inputs_frame = ttk.Frame(self.cycle_compare_frame)
-            compare_row3_inputs_frame.grid(row=3, column=1, columnspan=5, sticky=tk.W, pady=2)
-            
-            ttk.Label(compare_row3_inputs_frame, text="Min:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=0, sticky=tk.W, padx=(5,0))
-            self.dqdv_min_entry = ttk.Entry(compare_row3_inputs_frame, textvariable=self.dqdv_min_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=6)
-            self.dqdv_min_entry.grid(row=0, column=1, sticky=tk.W, padx=2)
-            self.dqdv_min_entry.bind('<Return>', lambda e: self.update_plot())
-            
-            ttk.Label(compare_row3_inputs_frame, text="Max:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=2, sticky=tk.W, padx=(5,0))
-            self.dqdv_max_entry = ttk.Entry(compare_row3_inputs_frame, textvariable=self.dqdv_max_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=6)
-            self.dqdv_max_entry.grid(row=0, column=3, sticky=tk.W, padx=2)
-            self.dqdv_max_entry.bind('<Return>', lambda e: self.update_plot())
-            
-            ttk.Label(compare_row3_inputs_frame, text="标题:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=4, sticky=tk.W, padx=(5,0))
-            self.dqdv_title_entry = ttk.Entry(compare_row3_inputs_frame, textvariable=self.dqdv_title_var, font=('Microsoft YaHei', self.GUI_FONT_SIZE), width=10)
-            self.dqdv_title_entry.grid(row=0, column=5, sticky=tk.W, padx=2)
-            self.dqdv_title_entry.bind('<Return>', lambda e: self.update_plot())
-            
-            self.compare_apply_btn = ttk.Button(compare_row3_inputs_frame, text="应用", command=self.update_plot, style='Big.TButton', width=5)
-            self.compare_apply_btn.grid(row=0, column=6, padx=(10,2), sticky=tk.W)
-
-            # 单Y轴绘图选项框架
-            self.plot_frame = ttk.LabelFrame(control_frame, text="绘图选项", padding="5", style='Custom.TLabelframe')
-            self.plot_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
-            
-            self.plot_scrollbar = ttk.Scrollbar(self.plot_frame, orient="vertical")
-            self.plot_canvas = tk.Canvas(self.plot_frame, borderwidth=0, highlightthickness=0, yscrollcommand=self.plot_scrollbar.set, height=360)
-            self.plot_scrollbar.configure(command=self.plot_canvas.yview)
-            
-            self.plot_canvas.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
-            self.plot_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-            self.plot_frame.grid_columnconfigure(0, weight=1)
-            self.plot_frame.grid_rowconfigure(0, weight=1)
-            
-            self.plot_content_frame = ttk.Frame(self.plot_canvas)
-            canvas_window = self.plot_canvas.create_window((0, 0), window=self.plot_content_frame, anchor="nw")
-            
-            self.plot_content_frame.bind("<Configure>", lambda e: self.plot_canvas.configure(scrollregion=self.plot_canvas.bbox("all")))
-            self.plot_canvas.bind("<Configure>", lambda e: self.plot_canvas.itemconfig(canvas_window, width=e.width))
-            
-            def _on_mousewheel(event):
-                try:
-                    first, last = self.plot_scrollbar.get()
-                    if first <= 0.0 and last >= 1.0:
-                        return
-                except Exception:
-                    pass
-                self.plot_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            def _bind_mousewheel(event):
-                self.plot_canvas.bind_all("<MouseWheel>", _on_mousewheel)
-            def _unbind_mousewheel(event):
-                self.plot_canvas.unbind_all("<MouseWheel>")
-            self.plot_canvas.bind("<Enter>", _bind_mousewheel)
-            self.plot_canvas.bind("<Leave>", _unbind_mousewheel)
-            
-            plot_frame = self.plot_content_frame
-            
-            # X轴控制行子框架 (独立列网格，防止被宽列表框拉伸而截断)
-            x_control_frame = ttk.Frame(plot_frame)
-            x_control_frame.grid(row=0, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
-            
-            # X轴选择与范围控制
-            ttk.Label(x_control_frame, text="X轴:", 
-                     font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=0, sticky=tk.W)
-            self.x_axis = tk.StringVar()
-            self.x_combo = ttk.Combobox(x_control_frame, textvariable=self.x_axis, 
-                                      state='readonly', font=('Microsoft YaHei', self.GUI_FONT_SIZE),
-                                      width=10) # 减少下拉框宽度
-            self.x_combo.grid(row=0, column=1, sticky=tk.W, padx=5)
-            
-            # X轴范围 Min / Max
-            ttk.Label(x_control_frame, text="Min:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=2, padx=(5,0), sticky=tk.W)
-            self.x_min_entry = ttk.Entry(x_control_frame, textvariable=self.x_min_var, width=6,
-                                         font=('Microsoft YaHei', self.GUI_FONT_SIZE))
-            self.x_min_entry.grid(row=0, column=3, padx=2, sticky=tk.W)
-            
-            ttk.Label(x_control_frame, text="Max:", font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=4, padx=(5,0), sticky=tk.W)
-            self.x_max_entry = ttk.Entry(x_control_frame, textvariable=self.x_max_var, width=6,
-                                         font=('Microsoft YaHei', self.GUI_FONT_SIZE))
-            self.x_max_entry.grid(row=0, column=5, padx=2, sticky=tk.W)
-            
-            # X轴标题
-            ttk.Label(x_control_frame, text="标题:").grid(row=0, column=6, padx=(5,0), sticky=tk.W)
-            self.x_title = ttk.Entry(x_control_frame, width=10, font=('Microsoft YaHei', self.GUI_FONT_SIZE)) # 减少标题宽度
-            self.x_title.grid(row=0, column=7, padx=2, sticky=tk.W)
-            self.x_title.insert(0, "Time/s")
-            
-            # 应用按钮
-            self.x_apply_btn = ttk.Button(x_control_frame, text="应用", command=self.update_plot,
-                                          style='Big.TButton', width=5)
-            self.x_apply_btn.grid(row=0, column=8, padx=(5,2), sticky=tk.W)
-            
-            # Y轴选择和按钮
-            y_frame = ttk.Frame(plot_frame)
-            y_frame.grid(row=1, column=0, columnspan=4, sticky=(tk.W, tk.E), padx=5)
-            ttk.Label(y_frame, text="Y轴:", 
-                     font=('Microsoft YaHei', self.GUI_FONT_SIZE)).grid(row=0, column=0, sticky=tk.W)
-            
-            self.y_listboxes = []
-            self.y_selections = [[], [], []]
-            
-            for i in range(3):
-                frame = ttk.Frame(y_frame)
-                frame.grid(row=0, column=i+1, padx=2)
-                
-                ttk.Label(frame, text=f"Y{i+1}:", 
-                         font=('Microsoft YaHei', self.GUI_FONT_SIZE)
-                         ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
-                
-                listbox = tk.Listbox(frame, selectmode=tk.EXTENDED, height=5, width=12,
-                                   exportselection=False,
-                                   font=('Microsoft YaHei', self.GUI_FONT_SIZE))
-                listbox.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
-                listbox.bind('<<ListboxSelect>>', self.on_selection_change)
-                self.y_listboxes.append(listbox)
-                
-                scrollbar = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
-                scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
-                listbox.configure(yscrollcommand=scrollbar.set)
-            
-            button_frame = ttk.Frame(y_frame)
-            button_frame.grid(row=0, column=4, padx=(25, 5))
-            
-            self.clear_btn = ttk.Button(button_frame, text="清除选择", 
-                      command=self.clear_all_selections,
-                      style='Big.TButton', width=10)
-            self.clear_btn.grid(row=0, column=0, pady=2)
-            
-            self.select_all_btn = ttk.Button(button_frame, text="全部选择", 
-                      command=self.select_all_y,
-                      style='Big.TButton', width=10)
-            self.select_all_btn.grid(row=1, column=0, pady=2)
-            
-            self.plot_btn = ttk.Button(button_frame, text="绘制图表", 
-                      command=self.delayed_update,
-                      style='Big.TButton', width=10)
-            self.plot_btn.grid(row=2, column=0, pady=2)
-            
-            self.save_btn = ttk.Button(button_frame, text="保存数据", 
-                      command=self.save_plot_data,
-                      style='Big.TButton', width=10)
-            self.save_btn.grid(row=3, column=0, pady=2)
-            
-            # 图例设置
-            self.font_family = tk.StringVar(value="SimHei")
-            legend_frame = ttk.Frame(plot_frame)
-            legend_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), padx=5)
-            ttk.Label(legend_frame, text="图例设置:", width=self.SETTING_LABEL_WIDTH).grid(
-                row=0, column=0, sticky=tk.W)
-            
-            ttk.Label(legend_frame, text="垂直:", width=self.Y_LABEL_WIDTH).grid(
-                row=0, column=1, sticky=tk.W, padx=self.LABEL_PADX)
-            self.legend_y = tk.StringVar(value="1.02")
-            ttk.Entry(legend_frame, textvariable=self.legend_y, width=self.ENTRY_WIDTH).grid(
-                row=0, column=2, sticky=tk.W, padx=self.WIDGET_PADX)
-
-            ttk.Label(legend_frame, text="水平:", width=self.Y_LABEL_WIDTH).grid(
-                row=0, column=3, sticky=tk.W, padx=self.LABEL_PADX)
-            self.legend_x_positions_str = tk.StringVar(value="0, 0.3, 0.7")
-            ttk.Entry(legend_frame, textvariable=self.legend_x_positions_str, width=self.ENTRY_WIDTH).grid(
-                row=0, column=4, sticky=tk.W, padx=self.WIDGET_PADX)
-            self.legend_x_positions_str.trace_add('write', lambda *args: self.update_legend_positions())
-
-            self.legend_visible = tk.BooleanVar(value=True)
-            ttk.Checkbutton(legend_frame, text="显示图例", 
-                          variable=self.legend_visible,
-                          command=self.toggle_legend,
-                          style='Custom.TCheckbutton').grid(
-                row=0, column=5, padx=self.WIDGET_PADX, sticky=tk.W)
-
-            ttk.Label(legend_frame, text="字体:", width=self.Y_LABEL_WIDTH).grid(
-                row=1, column=1, sticky=tk.W, padx=self.LABEL_PADX)
-            font_combo = ttk.Combobox(legend_frame, textvariable=self.font_family,
-                                    values=["SimHei", "SimSun", "KaiTi", "FangSong", "Arial"],
-                                    state='readonly', width=self.COMBO_WIDTH)
-            font_combo.grid(row=1, column=2, padx=self.WIDGET_PADX, sticky=tk.W)
-
-            ttk.Label(legend_frame, text="大小:", width=self.Y_LABEL_WIDTH).grid(
-                row=1, column=3, sticky=tk.W, padx=self.LABEL_PADX)
-            font_sizes = [str(size) for size in range(8, 25, 1)]
-            legend_size_combo = ttk.Combobox(legend_frame, textvariable=self.legend_font_size,
-                                           values=font_sizes,
-                                           state='readonly', width=self.COMBO_WIDTH)
-            legend_size_combo.grid(row=1, column=4, padx=self.WIDGET_PADX, sticky=tk.W)
-
-            cols_subframe = ttk.Frame(legend_frame)
-            cols_subframe.grid(row=1, column=5, padx=self.WIDGET_PADX, sticky=tk.W)
-            ttk.Label(cols_subframe, text="列数:", width=4).grid(row=0, column=0, sticky=tk.W)
-            legend_cols_combo = ttk.Combobox(cols_subframe, textvariable=self.legend_cols,
-                                           values=["1", "2", "3", "4", "5"],
-                                           state='readonly', width=3)
-            legend_cols_combo.grid(row=0, column=1, padx=(2, 0), sticky=tk.W)
-
-            # Y轴范围设置和标题
-            y_ranges_frame = ttk.Frame(plot_frame)
-            y_ranges_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E), padx=5)
-            
-            self.y_settings = []
-            default_y_configs = [
-                {'min': '20', 'max': '60', 'title': 'Temperature/℃'},
-                {'min': '20', 'max': '60', 'title': 'Temperature/℃'},
-                {'min': '0', 'max': '150', 'title': 'HeatingPower/W'}
-            ]
-            for i in range(3):
-                config = default_y_configs[i]
-                settings = {
-                    'min': tk.StringVar(value=config['min']),
-                    'max': tk.StringVar(value=config['max']),
-                    'title': tk.StringVar(value=config['title'])
-                }
-                self.y_settings.append(settings)
-                
-                ttk.Label(y_ranges_frame, text=f"Y{i+1}轴范围:", width=self.LABEL_WIDTH).grid(
-                    row=i, column=0, sticky=tk.W)
-                ttk.Label(y_ranges_frame, text="Min:", width=self.SMALL_LABEL_WIDTH).grid(
-                    row=i, column=1, sticky=tk.W, padx=self.LABEL_PADX)
-                ttk.Entry(y_ranges_frame, textvariable=self.y_settings[i]['min'], 
-                         width=self.ENTRY_WIDTH).grid(row=i, column=2, sticky=tk.W, padx=self.WIDGET_PADX)
-                ttk.Label(y_ranges_frame, text="Max:", width=self.SMALL_LABEL_WIDTH).grid(
-                    row=i, column=3, sticky=tk.W, padx=self.LABEL_PADX)
-                ttk.Entry(y_ranges_frame, textvariable=self.y_settings[i]['max'], 
-                         width=self.ENTRY_WIDTH).grid(row=i, column=4, sticky=tk.W, padx=self.WIDGET_PADX)
-                ttk.Label(y_ranges_frame, text="标题:", width=self.SMALL_LABEL_WIDTH).grid(
-                    row=i, column=5, sticky=tk.W, padx=self.LABEL_PADX)
-                ttk.Entry(y_ranges_frame, textvariable=self.y_settings[i]['title'], 
-                         width=self.TITLE_ENTRY_WIDTH).grid(row=i, column=6, sticky=tk.W, padx=self.WIDGET_PADX)
-                
-                self.y_settings[i]['min'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
-                self.y_settings[i]['max'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
-                self.y_settings[i]['title'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
-
-            ttk.Frame(plot_frame, height=10).grid(row=5, column=0, columnspan=4, pady=5)
-
-            # 统一的绘图设置表格框架（对齐 大小、Y3 等控件）
-            settings_grid_frame = ttk.Frame(plot_frame)
-            settings_grid_frame.grid(row=7, column=0, columnspan=4, sticky=(tk.W, tk.E), padx=5, pady=5)
-            
-            # 第一行：线型设置 (框线, 曲线, 大小)
-            ttk.Label(settings_grid_frame, text="线型设置:", width=self.SETTING_LABEL_WIDTH).grid(
-                row=0, column=0, sticky=tk.W)
-            
-            ttk.Label(settings_grid_frame, text="框线:", width=self.Y_LABEL_WIDTH).grid(
-                row=0, column=1, sticky=tk.W, padx=self.LABEL_PADX)
-            self.frame_width = tk.StringVar(value="1.5")
-            frame_width_combo = ttk.Combobox(settings_grid_frame, textvariable=self.frame_width,
-                                           values=["0.5", "1.0", "1.5", "2.0", "2.5", "3.0"],
-                                           state='readonly', width=self.COMBO_WIDTH)
-            frame_width_combo.grid(row=0, column=2, padx=self.WIDGET_PADX, sticky=tk.W)
-            
-            ttk.Label(settings_grid_frame, text="曲线:", width=self.Y_LABEL_WIDTH).grid(
-                row=0, column=3, sticky=tk.W, padx=self.LABEL_PADX)
-            self.line_width = tk.StringVar(value="1.5")
-            line_width_combo = ttk.Combobox(settings_grid_frame, textvariable=self.line_width,
-                                           values=["0.5", "1.0", "1.5", "2.0", "2.5", "3.0"],
-                                           state='readonly', width=self.COMBO_WIDTH)
-            line_width_combo.grid(row=0, column=4, padx=self.WIDGET_PADX, sticky=tk.W)
-            
-            ttk.Label(settings_grid_frame, text="大小:", width=self.Y_LABEL_WIDTH).grid(
-                row=0, column=5, sticky=tk.W, padx=self.LABEL_PADX)
-            self.font_size = tk.StringVar(value="15")
-            font_sizes = [str(size) for size in range(8, 25, 1)]
-            font_size_combo = ttk.Combobox(settings_grid_frame, textvariable=self.font_size,
-                                         values=font_sizes,
-                                         state='readonly', width=self.COMBO_WIDTH)
-            font_size_combo.grid(row=0, column=6, padx=self.WIDGET_PADX, sticky=tk.W)
-            
-            # 第二行：线型类型 (Y1, Y2, Y3)
-            ttk.Label(settings_grid_frame, text="线型类型:", width=self.SETTING_LABEL_WIDTH).grid(
-                row=1, column=0, sticky=tk.W)
-            
-            for i in range(3):
-                ttk.Label(settings_grid_frame, text=f"Y{i+1}:", width=self.Y_LABEL_WIDTH).grid(
-                    row=1, column=2*i+1, sticky=tk.W, padx=self.LABEL_PADX)
-                default_style = '点划线' if i == 2 else list(self.line_styles_dict.keys())[i]
-                style_var = tk.StringVar(value=default_style)
-                style_combo = ttk.Combobox(settings_grid_frame, textvariable=style_var,
-                                         values=list(self.line_styles_dict.keys()),
-                                         state='readonly', width=self.COMBO_WIDTH)
-                style_combo.grid(row=1, column=2*i+2, padx=self.WIDGET_PADX, sticky=tk.W)
-                self.line_styles.append(style_var)
-                style_var.trace_add('write', lambda *args: self.update_plot())
-                
-            # 第三行：绘图配色 (Y1, Y2, Y3)
-            ttk.Label(settings_grid_frame, text="绘图配色:", width=self.SETTING_LABEL_WIDTH).grid(
-                row=2, column=0, sticky=tk.W)
-            
-            self.color_schemes_dict = {
-                '默认': None,
-                'Set1': plt.cm.Set1,
-                'Set2': plt.cm.Set2,
-                'Set3': plt.cm.Set3,
-                'Paired': plt.cm.Paired,
-                'Dark2': plt.cm.Dark2,
-                'Accent': plt.cm.Accent,
-                'Pastel1': plt.cm.Pastel1,
-                'Pastel2': plt.cm.Pastel2
+    def init_ui(self):
+        from PySide6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        if screen:
+            screen_geometry = screen.availableGeometry()
+            width = int(screen_geometry.width() * 0.85)
+            height = int(screen_geometry.height() * 0.85)
+            width = max(1600, min(width, screen_geometry.width()))
+            height = max(900, min(height, screen_geometry.height()))
+            self.resize(width, height)
+        else:
+            self.resize(1600, 900)
+        self.setMinimumSize(1200, 800)
+        
+        self.setStyleSheet("""
+            QWidget {
+                font-family: "Microsoft YaHei", "Segoe UI", Arial;
+                font-size: 13px;
+                color: #2c3e50;
             }
-            self.color_schemes = []
-            for i in range(3):
-                ttk.Label(settings_grid_frame, text=f"Y{i+1}:", width=self.Y_LABEL_WIDTH).grid(
-                    row=2, column=2*i+1, sticky=tk.W, padx=self.LABEL_PADX)
-                default_scheme = 'Dark2' if i == 2 else list(self.color_schemes_dict.keys())[i]
-                scheme_var = tk.StringVar(value=default_scheme)
-                scheme_combo = ttk.Combobox(settings_grid_frame, textvariable=scheme_var,
-                                          values=list(self.color_schemes_dict.keys()),
-                                          state='readonly', width=self.COMBO_WIDTH)
-                scheme_combo.grid(row=2, column=2*i+2, padx=self.WIDGET_PADX, sticky=tk.W)
-                self.color_schemes.append(scheme_var)
-                scheme_var.trace_add('write', lambda *args: self.update_plot())
+            QMainWindow {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #cbe5ff, stop:1 #f0f7ff);
+            }
+            QScrollArea {
+                background: transparent;
+            }
+            QScrollArea > QWidget > QWidget {
+                background: transparent;
+            }
+            QSplitter {
+                background: transparent;
+            }
+            QWidget#controlWidget {
+                background: transparent;
+            }
+            QGroupBox {
+                font-weight: bold;
+                font-size: 14px;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 14px;
+                background-color: #ffffff;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 8px;
+                color: #1e293b;
+            }
+            QGroupBox::indicator {
+                width: 14px;
+                height: 14px;
+            }
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border-radius: 6px;
+                border: none;
+                padding: 6px 14px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+            QPushButton:pressed {
+                background-color: #1d4ed8;
+            }
+            QPushButton:disabled {
+                background-color: #cbd5e1;
+                color: #94a3b8;
+            }
+            QLineEdit, QComboBox {
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 5px 8px;
+                background-color: #ffffff;
+                font-size: 13px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #3b82f6;
+                outline: none;
+            }
+            QListWidget {
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                background-color: #ffffff;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 1px 6px;
+                border-radius: 4px;
+            }
+            QListWidget::item:selected {
+                background-color: #eff6ff;
+                color: #2563eb;
+            }
+            QTextEdit {
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                background-color: #ffffff;
+                color: #2c3e50;
+                font-family: 'Consolas', 'Fira Code', Monaco, monospace;
+                font-size: 14px;
+                padding: 8px;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #f1f5f9;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #cbd5e1;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #94a3b8;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+            }
+        """)
 
-            # 性能优化设置
-            perf_frame = ttk.Frame(plot_frame)
-            perf_frame.grid(row=9, column=0, columnspan=4, sticky=(tk.W, tk.E), padx=5)
-            ttk.Label(perf_frame, text="性能优化:", width=self.SETTING_LABEL_WIDTH).grid(
-                row=0, column=0, sticky=tk.W)
-            
-            self.auto_downsample_cb = ttk.Checkbutton(perf_frame, text="数据降频", 
-                                                      variable=self.auto_downsample,
-                                                      command=self.update_plot,
-                                                      style='Custom.TCheckbutton')
-            self.auto_downsample_cb.grid(row=0, column=1, padx=self.LABEL_PADX, sticky=tk.W)
-            
-            ttk.Label(perf_frame, text="数据上限:", width=8).grid(
-                row=0, column=2, sticky=tk.W, padx=self.LABEL_PADX)
-            self.max_plot_points_combo = ttk.Combobox(perf_frame, textvariable=self.max_plot_points,
-                                                      values=["5e4", "10e4", "20e4", "50e4", "Unlimited"],
-                                                      state='readonly', width=10)
-            self.max_plot_points_combo.grid(row=0, column=3, padx=self.WIDGET_PADX, sticky=tk.W)
-            self.max_plot_points_combo.bind('<<ComboboxSelected>>', lambda e: self.update_plot())
-
-            # 状态信息显示区域
-            status_frame = ttk.Frame(control_frame)
-            status_frame.grid(row=10, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.S), pady=5)
-            control_frame.grid_rowconfigure(10, weight=0)
-            
-            self.status_text = tk.Text(status_frame, height=6, width=40, font=default_font)
-            self.status_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
-            
-            scrollbar = ttk.Scrollbar(status_frame, orient="vertical", command=self.status_text.yview)
-            scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-            self.status_text.configure(yscrollcommand=scrollbar.set)
-            status_frame.grid_columnconfigure(0, weight=1)
-
-            # 图表显示框架
-            plot_display_frame = ttk.Frame(self.main_frame)
-            plot_display_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
-            plot_display_frame.grid_rowconfigure(0, weight=1)
-            plot_display_frame.grid_columnconfigure(0, weight=1)
-            
-            canvas_frame = ttk.Frame(plot_display_frame)
-            canvas_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-            canvas_frame.grid_rowconfigure(0, weight=1)
-            canvas_frame.grid_columnconfigure(0, weight=1)
-
-            self.fig = plt.figure(figsize=(self.fig_w, self.fig_h))
-            self.ax = self.fig.add_subplot(111)
-            self.canvas = FigureCanvasTkAgg(self.fig, master=canvas_frame)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-            # 创建工具栏
-            toolbar_frame = ttk.Frame(canvas_frame)
-            toolbar_frame.grid(row=1, column=0, sticky=(tk.W, tk.E))
-            self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
-            self.toolbar.update()
-            
-            self.axes = {'y1': self.ax}
-            self.current_axes = {'y1': self.ax}
-            
-            self.root.bind('<Configure>', self.on_window_resize)
-            self.x_title.bind('<Return>', lambda e: self.update_plot())
-            self.x_min_entry.bind('<Return>', lambda e: self.update_plot())
-            self.x_max_entry.bind('<Return>', lambda e: self.update_plot())
-            
-            min_width = min(1200, int(window_width * 0.9))
-            min_height = min(800, int(window_height * 0.85))
-            self.root.minsize(min_width, min_height)
-
-            self.font_family.trace_add('write', lambda *args: self.update_font_and_plot())
-            self.font_size.trace_add('write', lambda *args: self.update_font_and_plot())
-            self.legend_y.trace_add('write', lambda *args: self.update_legend_only())
-            self.legend_font_size.trace_add('write', lambda *args: self.update_legend_only())
-            self.legend_cols.trace_add('write', lambda *args: self.update_legend_only())
-            self.compare_x_var.trace_add('write', self.sync_compare_x)
-            self.x_axis.trace_add('write', self.sync_regular_x)
-            self.current_compare_type.trace_add('write', self.on_compare_type_changed)
-            self.x_combo.bind('<<ComboboxSelected>>', lambda e: self.delayed_update())
-
-            self.load_settings()
-            self._last_file_type = self.file_type.get()
-
-            # 动态测量并固定左侧面板的最小宽度
-            try:
-                self.root.update_idletasks()
-                self.battery_filter_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-                self.cycle_compare_frame.grid(row=6, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-                self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
-                self.root.update_idletasks()
-                
-                max_req_width = self.plot_frame.master.winfo_reqwidth()
-                self.main_frame.grid_columnconfigure(0, weight=0, minsize=max_req_width + 10)
-            except Exception as e:
-                self.logger.error(f"动态计算左侧控制栏宽度失败: {str(e)}")
-                self.main_frame.grid_columnconfigure(0, weight=0, minsize=623)
-            finally:
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        
+        splitter = QSplitter(Qt.Horizontal, central_widget)
+        main_layout.addWidget(splitter)
+        
+        # Left Panel (Controls) Scroll Area
+        left_scroll = QScrollArea(splitter)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        splitter.addWidget(left_scroll)
+        
+        control_widget = QWidget()
+        control_widget.setObjectName("controlWidget")
+        left_scroll.setWidget(control_widget)
+        
+        control_layout = QVBoxLayout(control_widget)
+        control_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # 1. File Type Selector
+        file_type_groupbox = QGroupBox("文件类型")
+        file_type_layout = QHBoxLayout(file_type_groupbox)
+        
+        self.file_type_group = QButtonGroup(self)
+        self.radio_raw = QRadioButton("FLOEFD")
+        self.radio_processed = QRadioButton("GENERAL")
+        self.radio_battery = QRadioButton("BATTERY")
+        
+        file_type_layout.addWidget(self.radio_raw)
+        file_type_layout.addWidget(self.radio_processed)
+        file_type_layout.addWidget(self.radio_battery)
+        
+        self.file_type_group.addButton(self.radio_raw, 0)
+        self.file_type_group.addButton(self.radio_processed, 1)
+        self.file_type_group.addButton(self.radio_battery, 2)
+        
+        # Radio Sync
+        def on_radio_toggled(btn, checked):
+            if checked:
+                val = "raw" if btn == self.radio_raw else "processed" if btn == self.radio_processed else "battery"
+                self.file_type.set(val)
                 self.update_file_type()
+        
+        self.radio_raw.toggled.connect(lambda c: on_radio_toggled(self.radio_raw, c))
+        self.radio_processed.toggled.connect(lambda c: on_radio_toggled(self.radio_processed, c))
+        self.radio_battery.toggled.connect(lambda c: on_radio_toggled(self.radio_battery, c))
+        
+        # Set default selection
+        if self.file_type.get() == "raw":
+            self.radio_raw.setChecked(True)
+        elif self.file_type.get() == "processed":
+            self.radio_processed.setChecked(True)
+        else:
+            self.radio_battery.setChecked(True)
             
-            self.check_queue()
-            self.logger.info("应用程序启动成功")
-        except Exception as e:
-            self.logger.error(f"初始化失败: {str(e)}")
-            raise
+        control_layout.addWidget(file_type_groupbox)
+        
+        # 2. Input Configuration Grid
+        input_groupbox = QGroupBox("输入配置")
+        input_groupbox.setCheckable(True)
+        input_groupbox.setChecked(True)
+        
+        input_content = QWidget()
+        input_grid = QGridLayout(input_content)
+        input_grid.setContentsMargins(0, 5, 0, 0)
+        
+        input_grid.addWidget(QLabel("文件路径:"), 0, 0)
+        self.file_entry = QLineEdit()
+        bind_lineedit(self.file_entry, self.file_path)
+        input_grid.addWidget(self.file_entry, 0, 1)
+        
+        self.browse_btn = QPushButton("浏览")
+        self.browse_btn.clicked.connect(self.browse_file)
+        input_grid.addWidget(self.browse_btn, 0, 2)
+        
+        input_grid.addWidget(QLabel("表格名称:"), 1, 0)
+        self.sheet_combo = CustomComboBox()
+        bind_combobox(self.sheet_combo, self.sheet_name)
+        input_grid.addWidget(self.sheet_combo, 1, 1)
+        
+        self.process_btn = QPushButton("读取")
+        self.process_btn.clicked.connect(self.process_data)
+        input_grid.addWidget(self.process_btn, 1, 2)
+        
+        # Row 2: Sub-parameters (IniRow, SKIP, NULL, 数据上限)
+        sub_param_widget = QWidget()
+        sub_param_layout = QHBoxLayout(sub_param_widget)
+        sub_param_layout.setContentsMargins(0, 0, 0, 0)
+        
+        sub_param_layout.addWidget(QLabel("IniRow:"))
+        self.start_row_entry = QLineEdit()
+        self.start_row_entry.setFixedWidth(40)
+        bind_lineedit(self.start_row_entry, self.start_row)
+        sub_param_layout.addWidget(self.start_row_entry)
+        
+        self.skip_label = QLabel("SKIP:")
+        self.skip_entry = QLineEdit()
+        self.skip_entry.setFixedWidth(40)
+        bind_lineedit(self.skip_entry, self.skip_rows_var)
+        sub_param_layout.addWidget(self.skip_label)
+        sub_param_layout.addWidget(self.skip_entry)
+        
+        self.null_label = QLabel("NULL:")
+        self.null_entry = QLineEdit()
+        self.null_entry.setFixedWidth(40)
+        bind_lineedit(self.null_entry, self.start_skip_var)
+        sub_param_layout.addWidget(self.null_label)
+        sub_param_layout.addWidget(self.null_entry)
+        
+        # Add "数据上限" next to NULL
+        self.max_plot_points_label = QLabel("上限:")
+        self.max_plot_points_combo = CustomComboBox()
+        self.max_plot_points_combo.addItems(["5e4", "10e4", "20e4", "50e4", "100e4", "None"])
+        self.max_plot_points_combo.setFixedWidth(70)
+        bind_combobox(self.max_plot_points_combo, self.max_plot_points)
+        self.max_plot_points_combo.currentIndexChanged.connect(lambda: self.update_plot())
+        sub_param_layout.addWidget(self.max_plot_points_label)
+        sub_param_layout.addWidget(self.max_plot_points_combo)
+        
+        input_grid.addWidget(sub_param_widget, 2, 0, 1, 2)
+        
+        self.csv2xlsx_btn = QPushButton("csv2xlsx")
+        self.csv2xlsx_btn.clicked.connect(self.convert_csv_to_xlsx)
+        input_grid.addWidget(self.csv2xlsx_btn, 2, 2)
+        
+        input_box_lay = QVBoxLayout(input_groupbox)
+        input_box_lay.setContentsMargins(10, 0, 10, 10)
+        input_box_lay.addWidget(input_content)
+        input_groupbox.toggled.connect(input_content.setVisible)
+        
+        control_layout.addWidget(input_groupbox)
+        
+        # 3. Battery Data Configuration GroupBox
+        self.battery_filter_frame = QGroupBox("电池数据配置")
+        self.battery_filter_frame.setCheckable(True)
+        self.battery_filter_frame.setChecked(True)
+        
+        battery_content = QWidget()
+        battery_grid = QGridLayout(battery_content)
+        battery_grid.setContentsMargins(0, 5, 0, 0)
+        
+        battery_grid.addWidget(QLabel("循环列:"), 0, 0)
+        self.cycle_col_combo = CustomComboBox()
+        bind_combobox(self.cycle_col_combo, self.cycle_col)
+        self.cycle_col_combo.currentIndexChanged.connect(self.on_cycle_col_changed)
+        battery_grid.addWidget(self.cycle_col_combo, 0, 1)
+        
+        battery_grid.addWidget(QLabel("工步列:"), 0, 2)
+        self.step_col_combo = CustomComboBox()
+        bind_combobox(self.step_col_combo, self.step_col)
+        self.step_col_combo.currentIndexChanged.connect(self.on_step_col_changed)
+        battery_grid.addWidget(self.step_col_combo, 0, 3)
+        
+        battery_grid.addWidget(QLabel("时间列:"), 0, 4)
+        self.time_col_combo = CustomComboBox()
+        bind_combobox(self.time_col_combo, self.time_col)
+        self.time_col_combo.currentIndexChanged.connect(self.on_time_col_changed)
+        battery_grid.addWidget(self.time_col_combo, 0, 5)
+        
+        battery_grid.addWidget(QLabel("循环筛选:"), 1, 0)
+        self.cycle_filter_combo = CustomComboBox()
+        bind_combobox(self.cycle_filter_combo, self.cycle_filter)
+        battery_grid.addWidget(self.cycle_filter_combo, 1, 1)
+        
+        battery_grid.addWidget(QLabel("工步筛选:"), 1, 2)
+        self.step_filter_combo = CustomComboBox()
+        bind_combobox(self.step_filter_combo, self.step_filter)
+        self.step_filter_combo.currentIndexChanged.connect(lambda: [self.update_listboxes(), self.delayed_update()])
+        battery_grid.addWidget(self.step_filter_combo, 1, 3)
+        
+        self.battery_calc_btn = QPushButton("应用")
+        self.battery_calc_btn.clicked.connect(self.update_plot)
+        battery_grid.addWidget(self.battery_calc_btn, 1, 5)
+        
+        self.cycle_compare_cb = QCheckBox("启用循环对比")
+        bind_checkbox(self.cycle_compare_cb, self.cycle_compare_var)
+        self.cycle_compare_cb.toggled.connect(lambda c: self.on_cycle_compare_toggle())
+        battery_grid.addWidget(self.cycle_compare_cb, 2, 0, 1, 2)
+        
+        battery_grid.addWidget(QLabel("电压列:"), 2, 2)
+        self.voltage_col_combo = CustomComboBox()
+        bind_combobox(self.voltage_col_combo, self.voltage_col)
+        self.voltage_col_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        battery_grid.addWidget(self.voltage_col_combo, 2, 3)
+        
+        battery_grid.addWidget(QLabel("电流列:"), 2, 4)
+        self.current_col_combo = CustomComboBox()
+        bind_combobox(self.current_col_combo, self.current_col)
+        self.current_col_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        battery_grid.addWidget(self.current_col_combo, 2, 5)
+        
+        battery_grid.addWidget(QLabel("电压比例:"), 3, 2)
+        self.voltage_scale_entry = QLineEdit()
+        bind_lineedit(self.voltage_scale_entry, self.voltage_scale_var)
+        self.voltage_scale_entry.returnPressed.connect(lambda: self.delayed_update())
+        battery_grid.addWidget(self.voltage_scale_entry, 3, 3)
+        
+        battery_grid.addWidget(QLabel("电流比例:"), 3, 4)
+        self.current_scale_entry = QLineEdit()
+        bind_lineedit(self.current_scale_entry, self.current_scale_var)
+        self.current_scale_entry.returnPressed.connect(lambda: self.delayed_update())
+        battery_grid.addWidget(self.current_scale_entry, 3, 5)
+        
+        battery_box_lay = QVBoxLayout(self.battery_filter_frame)
+        battery_box_lay.setContentsMargins(10, 0, 10, 10)
+        battery_box_lay.addWidget(battery_content)
+        self.battery_filter_frame.toggled.connect(battery_content.setVisible)
+        
+        control_layout.addWidget(self.battery_filter_frame)
+        
+        # 4. Cycle Compare Configuration GroupBox
+        self.cycle_compare_frame = QGroupBox("循环对比配置")
+        self.cycle_compare_frame.setCheckable(True)
+        self.cycle_compare_frame.setChecked(True)
+        
+        compare_content = QWidget()
+        compare_grid = QGridLayout(compare_content)
+        compare_grid.setContentsMargins(0, 5, 0, 0)
+        
+        compare_grid.addWidget(QLabel("对比范围:"), 0, 0)
+        self.cycle_range_entry = QLineEdit()
+        bind_lineedit(self.cycle_range_entry, self.cycle_compare_range_var)
+        self.cycle_range_entry.returnPressed.connect(lambda: self.delayed_update())
+        compare_grid.addWidget(self.cycle_range_entry, 0, 1)
+        
+        compare_grid.addWidget(QLabel("步长(Time):"), 0, 2)
+        self.time_step_entry = QLineEdit()
+        self.time_step_entry.setFixedWidth(50)
+        bind_lineedit(self.time_step_entry, self.time_step_var)
+        self.time_step_entry.returnPressed.connect(lambda: self.delayed_update())
+        compare_grid.addWidget(self.time_step_entry, 0, 3)
+        
+        compare_grid.addWidget(QLabel("CC极性:"), 0, 4)
+        self.cc_polarity_combo = CustomComboBox()
+        self.cc_polarity_combo.addItems(["正", "负"])
+        bind_combobox(self.cc_polarity_combo, self.cc_polarity_var)
+        self.cc_polarity_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        compare_grid.addWidget(self.cc_polarity_combo, 0, 5)
+        
+        compare_grid.addWidget(QLabel("滤波方式:"), 1, 0)
+        self.filter_type_combo = CustomComboBox()
+        self.filter_type_combo.addItems(["无", "Savitzky-Golay", "移动平均", "中值滤波"])
+        bind_combobox(self.filter_type_combo, self.filter_type_var)
+        self.filter_type_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        compare_grid.addWidget(self.filter_type_combo, 1, 1)
+        
+        compare_grid.addWidget(QLabel("窗口大小:"), 1, 2)
+        self.filter_window_entry = QLineEdit()
+        self.filter_window_entry.setFixedWidth(50)
+        bind_lineedit(self.filter_window_entry, self.filter_window_var)
+        self.filter_window_entry.returnPressed.connect(lambda: self.delayed_update())
+        compare_grid.addWidget(self.filter_window_entry, 1, 3)
+        
+        compare_grid.addWidget(QLabel("SG阶数:"), 1, 4)
+        self.sg_poly_combo = CustomComboBox()
+        self.sg_poly_combo.addItems(["2", "3", "4"])
+        bind_combobox(self.sg_poly_combo, self.sg_poly_var)
+        self.sg_poly_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        compare_grid.addWidget(self.sg_poly_combo, 1, 5)
+        
+        compare_grid.addWidget(QLabel("循环X轴:"), 2, 0)
+        self.compare_x_combo = CustomComboBox()
+        bind_combobox(self.compare_x_combo, self.compare_x_var)
+        self.compare_x_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        compare_grid.addWidget(self.compare_x_combo, 2, 1)
+        
+        compare_type_widget = QWidget()
+        compare_type_layout = QHBoxLayout(compare_type_widget)
+        compare_type_layout.setContentsMargins(0, 0, 0, 0)
+        self.compare_type_group = QButtonGroup(self)
+        self.radio_regular = QRadioButton("常规对比")
+        self.radio_dqdv = QRadioButton("dQ/dV")
+        self.radio_dvdq = QRadioButton("dV/dQ")
+        compare_type_layout.addWidget(self.radio_regular)
+        compare_type_layout.addWidget(self.radio_dqdv)
+        compare_type_layout.addWidget(self.radio_dvdq)
+        self.compare_type_group.addButton(self.radio_regular, 0)
+        self.compare_type_group.addButton(self.radio_dqdv, 1)
+        self.compare_type_group.addButton(self.radio_dvdq, 2)
+        
+        def on_compare_type_toggled(btn, checked):
+            if checked:
+                val = "regular" if btn == self.radio_regular else "dqdv" if btn == self.radio_dqdv else "dvdq"
+                self.current_compare_type.set(val)
+                self.on_compare_type_changed()
+                self.delayed_update()
+        
+        self.radio_regular.toggled.connect(lambda c: on_compare_type_toggled(self.radio_regular, c))
+        self.radio_dqdv.toggled.connect(lambda c: on_compare_type_toggled(self.radio_dqdv, c))
+        self.radio_dvdq.toggled.connect(lambda c: on_compare_type_toggled(self.radio_dvdq, c))
+        self.radio_regular.setChecked(True)
+        
+        compare_grid.addWidget(compare_type_widget, 2, 2, 1, 4)
+        
+        # Row 3 Y axis inputs
+        compare_y_widget = QWidget()
+        compare_y_layout = QHBoxLayout(compare_y_widget)
+        compare_y_layout.setContentsMargins(0, 0, 0, 0)
+        
+        compare_y_layout.addWidget(QLabel("Min:"))
+        self.dqdv_min_entry = QLineEdit()
+        self.dqdv_min_entry.setFixedWidth(50)
+        bind_lineedit(self.dqdv_min_entry, self.dqdv_min_var)
+        self.dqdv_min_entry.returnPressed.connect(lambda: self.update_plot())
+        compare_y_layout.addWidget(self.dqdv_min_entry)
+        
+        compare_y_layout.addWidget(QLabel("Max:"))
+        self.dqdv_max_entry = QLineEdit()
+        self.dqdv_max_entry.setFixedWidth(50)
+        bind_lineedit(self.dqdv_max_entry, self.dqdv_max_var)
+        self.dqdv_max_entry.returnPressed.connect(lambda: self.update_plot())
+        compare_y_layout.addWidget(self.dqdv_max_entry)
+        
+        compare_y_layout.addWidget(QLabel("标题:"))
+        self.dqdv_title_entry = QLineEdit()
+        bind_lineedit(self.dqdv_title_entry, self.dqdv_title_var)
+        self.dqdv_title_entry.returnPressed.connect(lambda: self.update_plot())
+        compare_y_layout.addWidget(self.dqdv_title_entry)
+        
+        self.compare_apply_btn = QPushButton("应用")
+        self.compare_apply_btn.clicked.connect(self.update_plot)
+        compare_y_layout.addWidget(self.compare_apply_btn)
+        
+        compare_grid.addWidget(QLabel("循环Y轴:"), 3, 0)
+        compare_grid.addWidget(compare_y_widget, 3, 1, 1, 5)
+        
+        compare_box_lay = QVBoxLayout(self.cycle_compare_frame)
+        compare_box_lay.setContentsMargins(10, 0, 10, 10)
+        compare_box_lay.addWidget(compare_content)
+        self.cycle_compare_frame.toggled.connect(compare_content.setVisible)
+        
+        control_layout.addWidget(self.cycle_compare_frame)
+        
+        # 5. Plot Frame (direct layout inside left layout, collapsible)
+        self.plot_frame = QGroupBox("绘图选项")
+        self.plot_frame.setCheckable(True)
+        self.plot_frame.setChecked(True)
+        
+        plot_content = QWidget()
+        plot_layout = QVBoxLayout(plot_content)
+        plot_layout.setContentsMargins(0, 5, 0, 0)
+        
+        # X Axis selection & bounds (optimized to a single horizontal layout)
+        x_axis_widget = QWidget()
+        x_axis_layout = QHBoxLayout(x_axis_widget)
+        x_axis_layout.setContentsMargins(0, 0, 0, 0)
+        x_axis_layout.setSpacing(4)
+        
+        x_axis_layout.addWidget(QLabel("X轴:"))
+        self.x_combo = CustomComboBox()
+        self.x_combo.setFixedWidth(110)
+        bind_combobox(self.x_combo, self.x_axis)
+        self.x_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        x_axis_layout.addWidget(self.x_combo)
+        
+        x_axis_layout.addWidget(QLabel("Min:"))
+        self.x_min_entry = QLineEdit()
+        self.x_min_entry.setFixedWidth(50)
+        bind_lineedit(self.x_min_entry, self.x_min_var)
+        self.x_min_entry.returnPressed.connect(lambda: self.update_plot())
+        x_axis_layout.addWidget(self.x_min_entry)
+        
+        x_axis_layout.addWidget(QLabel("Max:"))
+        self.x_max_entry = QLineEdit()
+        self.x_max_entry.setFixedWidth(50)
+        bind_lineedit(self.x_max_entry, self.x_max_var)
+        self.x_max_entry.returnPressed.connect(lambda: self.update_plot())
+        x_axis_layout.addWidget(self.x_max_entry)
+        
+        x_axis_layout.addWidget(QLabel("标题:"))
+        self.x_title = QLineEdit("Time/s")
+        self.x_title.setFixedWidth(100)
+        self.x_title.returnPressed.connect(lambda: self.update_plot())
+        x_axis_layout.addWidget(self.x_title)
+        
+        plot_layout.addWidget(x_axis_widget)
+        
+        # Y Axis list boxes
+        y_axis_widget = QWidget()
+        y_axis_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        y_axis_layout = QHBoxLayout(y_axis_widget)
+        y_axis_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.y_listboxes = []
+        self.y_selections = [[], [], []]
+        
+        for i in range(3):
+            pane = QWidget()
+            pane.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+            pane_lay = QVBoxLayout(pane)
+            pane_lay.setContentsMargins(2, 2, 2, 2)
+            pane_lay.addWidget(QLabel(f"Y{i+1}:"))
+            
+            listbox = CustomListWidget()
+            listbox.bind('<<ListboxSelect>>', self.on_selection_change)
+            listbox.setMinimumHeight(150)
+            listbox.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+            pane_lay.addWidget(listbox)
+            self.y_listboxes.append(listbox)
+            y_axis_layout.addWidget(pane, 3) # Stretch factor 3 for listbox columns
+            
+        y_buttons_widget = QWidget()
+        y_buttons_lay = QVBoxLayout(y_buttons_widget)
+        y_buttons_lay.setContentsMargins(0, 0, 0, 0)
+        
+        self.clear_btn = QPushButton("清除")
+        self.clear_btn.setFixedWidth(60)
+        self.clear_btn.clicked.connect(self.clear_all_selections)
+        y_buttons_lay.addWidget(self.clear_btn)
+        
+        self.select_all_btn = QPushButton("全选")
+        self.select_all_btn.setFixedWidth(60)
+        self.select_all_btn.clicked.connect(self.select_all_y)
+        y_buttons_lay.addWidget(self.select_all_btn)
+        
+        self.plot_btn = QPushButton("绘制")
+        self.plot_btn.setFixedWidth(60)
+        self.plot_btn.clicked.connect(self.delayed_update)
+        y_buttons_lay.addWidget(self.plot_btn)
+        
+        self.save_btn = QPushButton("保存")
+        self.save_btn.setFixedWidth(60)
+        self.save_btn.clicked.connect(self.save_plot_data)
+        y_buttons_lay.addWidget(self.save_btn)
+        
+        y_axis_layout.addWidget(y_buttons_widget, 1) # Stretch factor 1 for button column
+        plot_layout.addWidget(y_axis_widget)
+        
+        # Y Range Configuration (Collapsible)
+        y_range_groupbox = QGroupBox("坐标轴范围")
+        y_range_groupbox.setCheckable(True)
+        y_range_groupbox.setChecked(True)
+        
+        y_range_content = QWidget()
+        y_range_content_lay = QGridLayout(y_range_content)
+        y_range_content_lay.setContentsMargins(0, 5, 0, 0)
+        
+        for i in range(3):
+            y_range_content_lay.addWidget(QLabel(f"Y{i+1}轴范围 Min:"), i, 0)
+            ymin_entry = QLineEdit()
+            ymin_entry.setFixedWidth(50)
+            bind_lineedit(ymin_entry, self.y_settings[i]['min'])
+            y_range_content_lay.addWidget(ymin_entry, i, 1)
+            
+            y_range_content_lay.addWidget(QLabel("Max:"), i, 2)
+            ymax_entry = QLineEdit()
+            ymax_entry.setFixedWidth(50)
+            bind_lineedit(ymax_entry, self.y_settings[i]['max'])
+            y_range_content_lay.addWidget(ymax_entry, i, 3)
+            
+            y_range_content_lay.addWidget(QLabel("标题:"), i, 4)
+            ytitle_entry = QLineEdit()
+            bind_lineedit(ytitle_entry, self.y_settings[i]['title'])
+            y_range_content_lay.addWidget(ytitle_entry, i, 5)
+            
+            self.y_settings[i]['min'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
+            self.y_settings[i]['max'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
+            self.y_settings[i]['title'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
+            
+        y_range_box_lay = QVBoxLayout(y_range_groupbox)
+        y_range_box_lay.setContentsMargins(10, 0, 10, 10)
+        y_range_box_lay.addWidget(y_range_content)
+        y_range_groupbox.toggled.connect(y_range_content.setVisible)
+        
+        plot_layout.addWidget(y_range_groupbox)
+
+        # Combined Plot Configuration GroupBox (Collapsible)
+        plot_config_groupbox = QGroupBox("绘图配置")
+        plot_config_groupbox.setCheckable(True)
+        plot_config_groupbox.setChecked(True)
+        
+        plot_config_content = QWidget()
+        plot_config_content_lay = QGridLayout(plot_config_content)
+        plot_config_content_lay.setContentsMargins(0, 5, 0, 0)
+        
+        # Legend vertical/horizontal pos & visibility
+        self.legend_visible_cb = QCheckBox("显示图例")
+        bind_checkbox(self.legend_visible_cb, self.legend_visible)
+        self.legend_visible_cb.toggled.connect(lambda c: self.toggle_legend())
+        plot_config_content_lay.addWidget(self.legend_visible_cb, 0, 0)
+        
+        legend_pos_widget = QWidget()
+        legend_pos_lay = QHBoxLayout(legend_pos_widget)
+        legend_pos_lay.setContentsMargins(0, 0, 0, 0)
+        legend_pos_lay.setSpacing(6)
+        
+        legend_pos_lay.addWidget(QLabel("垂直位置:"))
+        self.legend_y_entry = QLineEdit()
+        self.legend_y_entry.setFixedWidth(50)
+        bind_lineedit(self.legend_y_entry, self.legend_y)
+        legend_pos_lay.addWidget(self.legend_y_entry)
+        
+        legend_pos_lay.addWidget(QLabel("水平位置:"))
+        self.legend_x_entry = QLineEdit()
+        self.legend_x_entry.setFixedWidth(100)
+        bind_lineedit(self.legend_x_entry, self.legend_x_positions_str)
+        legend_pos_lay.addWidget(self.legend_x_entry)
+        
+        legend_pos_lay.addStretch(1) # Keep inputs tightly grouped next to labels, push reset button to the right
+        
+        self.reset_plot_config_btn = QPushButton("重置")
+        self.reset_plot_config_btn.setFixedWidth(60)
+        self.reset_plot_config_btn.clicked.connect(self.reset_plot_config)
+        legend_pos_lay.addWidget(self.reset_plot_config_btn)
+        
+        plot_config_content_lay.addWidget(legend_pos_widget, 0, 1, 1, 5)
+        
+        # Legend Font, Size (QLineEdit), Column count
+        plot_config_content_lay.addWidget(QLabel("图例字体:"), 1, 0)
+        self.font_combo = CustomComboBox()
+        self.font_combo.addItems(["SimHei", "SimSun", "KaiTi", "FangSong", "Arial"])
+        bind_combobox(self.font_combo, self.font_family)
+        plot_config_content_lay.addWidget(self.font_combo, 1, 1)
+        
+        plot_config_content_lay.addWidget(QLabel("图例列数:"), 1, 2)
+        self.legend_cols_combo = CustomComboBox()
+        self.legend_cols_combo.addItems(["1", "2", "3", "4", "5"])
+        bind_combobox(self.legend_cols_combo, self.legend_cols)
+        plot_config_content_lay.addWidget(self.legend_cols_combo, 1, 3)
+        
+        plot_config_content_lay.addWidget(QLabel("图例字号:"), 1, 4)
+        self.legend_size_entry = QLineEdit()
+        self.legend_size_entry.setFixedWidth(50)
+        bind_lineedit(self.legend_size_entry, self.legend_font_size)
+        self.legend_size_entry.returnPressed.connect(lambda: self.update_plot())
+        plot_config_content_lay.addWidget(self.legend_size_entry, 1, 5)
+        
+        # Frame width, Line width, Axis Font Size (QLineEdit)
+        plot_config_content_lay.addWidget(QLabel("轴线宽度:"), 2, 0)
+        self.frame_width_combo = CustomComboBox()
+        self.frame_width_combo.addItems(["0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"])
+        bind_combobox(self.frame_width_combo, self.frame_width)
+        plot_config_content_lay.addWidget(self.frame_width_combo, 2, 1)
+        
+        plot_config_content_lay.addWidget(QLabel("曲线宽度:"), 2, 2)
+        self.line_width_combo = CustomComboBox()
+        self.line_width_combo.addItems(["0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"])
+        bind_combobox(self.line_width_combo, self.line_width)
+        plot_config_content_lay.addWidget(self.line_width_combo, 2, 3)
+        
+        plot_config_content_lay.addWidget(QLabel("轴线字号:"), 2, 4)
+        self.font_size_entry = QLineEdit()
+        self.font_size_entry.setFixedWidth(50)
+        bind_lineedit(self.font_size_entry, self.font_size)
+        self.font_size_entry.returnPressed.connect(lambda: self.update_plot())
+        plot_config_content_lay.addWidget(self.font_size_entry, 2, 5)
+        
+        # Color schemes mapping
+        self.color_schemes_dict = {
+            '默认': None,
+            'Tab10': plt.cm.tab10,
+            'Set1': plt.cm.Set1,
+            'Set2': plt.cm.Set2,
+            'Set3': plt.cm.Set3,
+            'Paired': plt.cm.Paired,
+            'Dark2': plt.cm.Dark2,
+            'Accent': plt.cm.Accent,
+            'Pastel1': plt.cm.Pastel1,
+            'Pastel2': plt.cm.Pastel2
+        }
+
+        # Y1-Y3 line styles and colors
+        for i in range(3):
+            row = 3 + i
+            
+            # Y1-Y3 Style
+            style_var = Var('点划线' if i == 2 else list(self.line_styles_dict.keys())[i])
+            style_combo = CustomComboBox()
+            style_combo.addItems(list(self.line_styles_dict.keys()))
+            bind_combobox(style_combo, style_var)
+            plot_config_content_lay.addWidget(QLabel(f"Y{i+1}线型:"), row, 0)
+            plot_config_content_lay.addWidget(style_combo, row, 1)
+            self.line_styles.append(style_var)
+            style_var.trace_add('write', lambda *args: self.update_plot())
+            
+            # Y1-Y3 Color
+            if i == 0:
+                default_scheme = 'Tab10'
+            elif i == 1:
+                default_scheme = 'Set1'
+            else:
+                default_scheme = 'Dark2'
+            scheme_var = Var(default_scheme)
+            scheme_combo = CustomComboBox()
+            scheme_combo.addItems(list(self.color_schemes_dict.keys()))
+            bind_combobox(scheme_combo, scheme_var)
+            plot_config_content_lay.addWidget(QLabel(f"Y{i+1}配色:"), row, 2)
+            plot_config_content_lay.addWidget(scheme_combo, row, 3, 1, 3)
+            self.color_schemes.append(scheme_var)
+            scheme_var.trace_add('write', lambda *args: self.update_plot())
+            
+        plot_config_box_lay = QVBoxLayout(plot_config_groupbox)
+        plot_config_box_lay.setContentsMargins(10, 0, 10, 10)
+        plot_config_box_lay.addWidget(plot_config_content)
+        plot_config_groupbox.toggled.connect(plot_config_content.setVisible)
+        
+        plot_layout.addWidget(plot_config_groupbox)
+        
+        plot_box_lay = QVBoxLayout(self.plot_frame)
+        plot_box_lay.setContentsMargins(10, 0, 10, 10)
+        plot_box_lay.addWidget(plot_content)
+        self.plot_frame.toggled.connect(plot_content.setVisible)
+        
+        control_layout.addWidget(self.plot_frame)
+        
+        # 5.5 Advanced Configuration GroupBox (Collapsible, default collapsed)
+        self.adv_groupbox = QGroupBox("高级配置")
+        self.adv_groupbox.setCheckable(True)
+        self.adv_groupbox.setChecked(False) # Collapsed by default
+        
+        adv_content = QWidget()
+        adv_grid = QGridLayout(adv_content)
+        adv_grid.setContentsMargins(0, 5, 0, 0)
+        adv_grid.setColumnStretch(0, 0)
+        adv_grid.setColumnStretch(1, 1)
+        adv_grid.setColumnStretch(2, 0)
+        adv_grid.setColumnStretch(3, 1)
+        adv_grid.setColumnStretch(4, 0)
+        adv_grid.setColumnStretch(5, 1)
+        
+        # Row 0: Left Margin
+        adv_grid.addWidget(QLabel("左侧边距 倍数:"), 0, 0)
+        self.adv_left_mult_entry = QLineEdit()
+        bind_lineedit(self.adv_left_mult_entry, self.adv_left_margin_mult)
+        self.adv_left_mult_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_left_mult_entry, 0, 1)
+        
+        adv_grid.addWidget(QLabel("最小像素:"), 0, 2)
+        self.adv_left_min_px_entry = QLineEdit()
+        bind_lineedit(self.adv_left_min_px_entry, self.adv_left_margin_min_px)
+        self.adv_left_min_px_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_left_min_px_entry, 0, 3)
+        
+        adv_grid.addWidget(QLabel("最小比例:"), 0, 4)
+        self.adv_left_min_pct_entry = QLineEdit()
+        bind_lineedit(self.adv_left_min_pct_entry, self.adv_left_margin_min_pct)
+        self.adv_left_min_pct_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_left_min_pct_entry, 0, 5)
+        
+        # Row 1: Y3 Right Margin
+        adv_grid.addWidget(QLabel("Y3右边距 倍数:"), 1, 0)
+        self.adv_y3_mult_entry = QLineEdit()
+        bind_lineedit(self.adv_y3_mult_entry, self.adv_y3_margin_mult)
+        self.adv_y3_mult_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y3_mult_entry, 1, 1)
+        
+        adv_grid.addWidget(QLabel("最小像素:"), 1, 2)
+        self.adv_y3_min_px_entry = QLineEdit()
+        bind_lineedit(self.adv_y3_min_px_entry, self.adv_y3_margin_min_px)
+        self.adv_y3_min_px_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y3_min_px_entry, 1, 3)
+        
+        adv_grid.addWidget(QLabel("最大比例:"), 1, 4)
+        self.adv_y3_max_pct_entry = QLineEdit()
+        bind_lineedit(self.adv_y3_max_pct_entry, self.adv_y3_max_right_pct)
+        self.adv_y3_max_pct_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y3_max_pct_entry, 1, 5)
+        
+        # Row 2: Y2 Right Margin
+        adv_grid.addWidget(QLabel("Y2右边距 倍数:"), 2, 0)
+        self.adv_y2_mult_entry = QLineEdit()
+        bind_lineedit(self.adv_y2_mult_entry, self.adv_y2_margin_mult)
+        self.adv_y2_mult_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y2_mult_entry, 2, 1)
+        
+        adv_grid.addWidget(QLabel("最小像素:"), 2, 2)
+        self.adv_y2_min_px_entry = QLineEdit()
+        bind_lineedit(self.adv_y2_min_px_entry, self.adv_y2_margin_min_px)
+        self.adv_y2_min_px_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y2_min_px_entry, 2, 3)
+        
+        adv_grid.addWidget(QLabel("最大比例:"), 2, 4)
+        self.adv_y2_max_pct_entry = QLineEdit()
+        bind_lineedit(self.adv_y2_max_pct_entry, self.adv_y2_max_right_pct)
+        self.adv_y2_max_pct_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y2_max_pct_entry, 2, 5)
+        
+        # Row 3: Y1 Right Margin
+        adv_grid.addWidget(QLabel("Y1右边距 倍数:"), 3, 0)
+        self.adv_y1_mult_entry = QLineEdit()
+        bind_lineedit(self.adv_y1_mult_entry, self.adv_y1_margin_mult)
+        self.adv_y1_mult_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y1_mult_entry, 3, 1)
+        
+        adv_grid.addWidget(QLabel("最小像素:"), 3, 2)
+        self.adv_y1_min_px_entry = QLineEdit()
+        bind_lineedit(self.adv_y1_min_px_entry, self.adv_y1_margin_min_px)
+        self.adv_y1_min_px_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y1_min_px_entry, 3, 3)
+        
+        adv_grid.addWidget(QLabel("最大比例:"), 3, 4)
+        self.adv_y1_max_pct_entry = QLineEdit()
+        bind_lineedit(self.adv_y1_max_pct_entry, self.adv_y1_max_right_pct)
+        self.adv_y1_max_pct_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_y1_max_pct_entry, 3, 5)
+        
+        # Row 4: Reset Button
+        self.adv_reset_btn = QPushButton("恢复默认设置")
+        self.adv_reset_btn.clicked.connect(self.reset_advanced_settings)
+        adv_grid.addWidget(self.adv_reset_btn, 4, 0, 1, 6)
+        
+        adv_box_lay = QVBoxLayout(self.adv_groupbox)
+        adv_box_lay.setContentsMargins(10, 0, 10, 10)
+        adv_box_lay.addWidget(adv_content)
+        self.adv_groupbox.toggled.connect(adv_content.setVisible)
+        adv_content.setVisible(False) # Collapsed by default
+        
+        control_layout.addWidget(self.adv_groupbox)
+
+        # 6. Status console widget
+        console_groupbox = QGroupBox("状态日志")
+        console_groupbox.setCheckable(True)
+        console_groupbox.setChecked(True)
+        
+        console_content = QWidget()
+        console_lay = QVBoxLayout(console_content)
+        console_lay.setContentsMargins(0, 5, 0, 0)
+        
+        self.status_text = QTextEdit()
+        self.status_text.setReadOnly(True)
+        self.status_text.setFixedHeight(120)
+        console_lay.addWidget(self.status_text)
+        
+        console_box_lay = QVBoxLayout(console_groupbox)
+        console_box_lay.setContentsMargins(10, 0, 10, 10)
+        console_box_lay.addWidget(console_content)
+        console_groupbox.toggled.connect(console_content.setVisible)
+        
+        control_layout.addWidget(console_groupbox)
+
+        # Right Panel (Matplotlib Canvas)
+        plot_display_widget = QWidget(splitter)
+        plot_display_lay = QVBoxLayout(plot_display_widget)
+        plot_display_lay.setContentsMargins(5, 5, 5, 5)
+        
+        self.fig = plt.figure(figsize=(10, 8))
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvas(self.fig)
+        plot_display_lay.addWidget(self.canvas)
+        
+        # Navigation toolbar
+        self.toolbar = NavigationToolbar(self.canvas, plot_display_widget)
+        plot_display_lay.addWidget(self.toolbar)
+        
+        self.axes = {'y1': self.ax}
+        self.current_axes = {'y1': self.ax}
+        
+        splitter.addWidget(plot_display_widget)
+        splitter.setSizes([520, 1140])   # Left sidebar width 460, right canvas width 1140
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
 
     def check_queue(self):
         """检查消息队列以在主线程中安全地更新 UI"""
@@ -753,9 +1199,9 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
                     message = msg.get('message')
                     clear = msg.get('clear', False)
                     if clear:
-                        self.status_text.delete(1.0, tk.END)
-                    self.status_text.insert(tk.END, message + "\n")
-                    self.status_text.see(tk.END)
+                        self.status_text.clear()
+                    self.status_text.append(message)
+                    self.status_text.ensureCursorVisible()
                 elif msg_type == 'done':
                     df = msg.get('df')
                     self.result_df = df
@@ -800,26 +1246,29 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
                 self.msg_queue.task_done()
         except queue.Empty:
             pass
-        self.root.after(100, self.check_queue)
+        QTimer.singleShot(100, self.check_queue)
 
     def set_buttons_state(self, enabled=True):
         """控制交互按钮状态与光标形状，避免重复并发操作"""
-        state = 'normal' if enabled else 'disabled'
-        self.process_btn.configure(state=state)
-        self.browse_btn.configure(state=state)
-        self.battery_calc_btn.configure(state=state)
-        self.clear_btn.configure(state=state)
-        self.select_all_btn.configure(state=state)
-        self.plot_btn.configure(state=state)
-        self.save_btn.configure(state=state)
-        self.csv2xlsx_btn.configure(state=state)
+        self.process_btn.setEnabled(enabled)
+        self.browse_btn.setEnabled(enabled)
+        self.battery_calc_btn.setEnabled(enabled)
+        self.clear_btn.setEnabled(enabled)
+        self.select_all_btn.setEnabled(enabled)
+        self.plot_btn.setEnabled(enabled)
+        self.save_btn.setEnabled(enabled)
+        self.csv2xlsx_btn.setEnabled(enabled)
         if hasattr(self, 'compare_apply_btn'):
-            self.compare_apply_btn.configure(state=state)
+            self.compare_apply_btn.setEnabled(enabled)
         
-        cursor = "" if enabled else "watch"
-        self.root.configure(cursor=cursor)
+        if enabled:
+            self.unsetCursor()
+        else:
+            self.setCursor(Qt.WaitCursor)
 
     def update_file_type(self):
+        if not hasattr(self, 'battery_filter_frame') or not hasattr(self, 'cycle_compare_frame') or not hasattr(self, 'sheet_combo'):
+            return
         current_type = self.file_type.get()
         if not hasattr(self, '_last_file_type') or current_type != self._last_file_type:
             self._last_file_type = current_type
@@ -857,55 +1306,24 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
                 self.y_settings[2]['max'].set('150')
                 self.y_settings[2]['title'].set('HeatingPower/W')
 
-        # Always grid in the same order: 起始行 (leftmost), SKIP, NULL
-        self.start_row_label.grid(row=0, column=0, sticky=tk.W, padx=(2, 2))
-        self.start_row_entry.grid(row=0, column=1, sticky=tk.W, padx=(2, 10))
-        self.skip_label.grid(row=0, column=2, sticky=tk.W, padx=(2, 2))
-        self.skip_entry.grid(row=0, column=3, sticky=tk.W, padx=(2, 10))
-        self.null_label.grid(row=0, column=4, sticky=tk.W, padx=(2, 2))
-        self.null_entry.grid(row=0, column=5, sticky=tk.W, padx=(2, 10))
-
-        # Reset row weights of control_frame
-        for r in [5, 6, 7, 8, 10]:
-            self.control_frame.grid_rowconfigure(r, weight=0)
-
+        # Visibility controls
         if self.file_type.get() == "battery":
-            self.plot_canvas.configure(height=360)
-            self.battery_filter_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
+            self.battery_filter_frame.setVisible(True)
             if self.cycle_compare_var.get():
-                self.cycle_compare_frame.grid(row=6, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-                self.plot_frame.grid(row=8, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S)) # 下移至 row 8
-                self.control_frame.grid_rowconfigure(8, weight=1)
+                self.cycle_compare_frame.setVisible(True)
             else:
-                self.cycle_compare_frame.grid_forget()
-                self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S)) # 下移至 row 7
-                self.control_frame.grid_rowconfigure(7, weight=1)
+                self.cycle_compare_frame.setVisible(False)
         else:
-            self.plot_canvas.configure(height=520)
-            self.battery_filter_frame.grid_forget()
-            self.cycle_compare_frame.grid_forget()
-            self.plot_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S)) # 下移至 row 7
-            self.control_frame.grid_rowconfigure(7, weight=1)
+            self.battery_filter_frame.setVisible(False)
+            self.cycle_compare_frame.setVisible(False)
 
         if self.file_type.get() == "raw":
-            self.sheet_combo.configure(state='readonly')
+            self.sheet_combo.setEnabled(True)
         else:
-            if self.file_path.get().endswith('.xlsx'):
-                self.sheet_combo.configure(state='readonly')
+            if self.file_path.get() and self.file_path.get().endswith('.xlsx'):
+                self.sheet_combo.setEnabled(True)
             else:
-                self.sheet_combo.configure(state='disabled')
-
-        # Self-learning minimum panel width to prevent jitter when switching panels
-        try:
-            self.root.update_idletasks()
-            req_width = self.control_frame.winfo_reqwidth()
-            current_min = self.main_frame.grid_columnconfigure(0)['minsize']
-            if isinstance(current_min, str):
-                current_min = int(current_min)
-            new_min = max(current_min, req_width + 10)
-            self.main_frame.grid_columnconfigure(0, minsize=new_min)
-        except Exception:
-            pass
+                self.sheet_combo.setEnabled(False)
 
     def on_selection_change(self, event):
         """当任何Listbox的选择改变时更新状态"""
@@ -978,7 +1396,7 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
     def clear_all_selections(self):
         """清除所有选择"""
         for i, listbox in enumerate(self.y_listboxes):
-            listbox.selection_clear(0, tk.END)
+            listbox.selection_clear()
             self.y_selections[i] = []
         if hasattr(self, 'fig'):
             self.fig.clf()
@@ -1032,10 +1450,9 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
     def update_status(self, message, clear=False):
         """更新状态信息"""
         if clear:
-            self.status_text.delete(1.0, tk.END)
-        self.status_text.insert(tk.END, message + "\n")
-        self.status_text.see(tk.END)
-        self.root.update()
+            self.status_text.clear()
+        self.status_text.append(message)
+        self.status_text.ensureCursorVisible()
 
     def update_listboxes(self):
         """更新所有列表框的内容"""
@@ -1092,22 +1509,68 @@ class PlotterGUI(DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExport
                 self.x_combo.set(columns[0])
             
             for i, listbox in enumerate(self.y_listboxes):
-                listbox.delete(0, tk.END)
+                listbox.delete()
                 for col in self.result_df.columns:
                     if col != 'Index':
-                        listbox.insert(tk.END, col)
+                        listbox.insert('end', col)
                     
         except Exception as e:
             self.update_status(f"更新列表失败: {str(e)}")
 
-    def on_closing(self):
+    def reset_plot_config(self):
+        self.legend_visible.set(True)
+        self.legend_y.set("1.02")
+        self.legend_x_positions_str.set("0, 0.3, 0.6")
+        self.legend_font_size.set("18")
+        self.legend_cols.set("1")
+        self.frame_width.set("1.5")
+        self.line_width.set("1.5")
+        self.font_size.set("18")
+        
+        # Color schemes & line styles defaults
+        if len(self.color_schemes) >= 3:
+            self.color_schemes[0].set("Tab10")
+            self.color_schemes[1].set("Set1")
+            self.color_schemes[2].set("Dark2")
+        if len(self.line_styles) >= 3:
+            self.line_styles[0].set("实线")
+            self.line_styles[1].set("虚线")
+            self.line_styles[2].set("点划线")
+            
+        self.update_font_and_plot()
+
+    def reset_advanced_settings(self):
+        self.adv_left_margin_mult.set("4.5")
+        self.adv_left_margin_min_px.set("80")
+        self.adv_left_margin_min_pct.set("0.08")
+        
+        self.adv_y3_margin_mult.set("9.5")
+        self.adv_y3_margin_min_px.set("170")
+        self.adv_y3_max_right_pct.set("0.83")
+        
+        self.adv_y2_margin_mult.set("4.0")
+        self.adv_y2_margin_min_px.set("75")
+        self.adv_y2_max_right_pct.set("0.93")
+        
+        self.adv_y1_margin_mult.set("1.5")
+        self.adv_y1_margin_min_px.set("20")
+        self.adv_y1_max_right_pct.set("0.97")
+        
+        self.update_plot()
+
+    def closeEvent(self, event):
         """窗口关闭时的清理工作"""
         try:
             self.clear_memory()
             self.save_settings()
             logging.shutdown()
-            self.root.destroy()
+            event.accept()
             os._exit(0)
         except Exception as e:
             print(f"关闭程序时出错: {str(e)}")
+            event.accept()
             os._exit(1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.on_window_resize()

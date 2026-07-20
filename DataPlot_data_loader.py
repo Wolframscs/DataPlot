@@ -1,10 +1,11 @@
 import os
 import time
 import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox
 import pandas as pd
 import openpyxl
+
+from PySide6.QtWidgets import QMessageBox, QFileDialog
+from PySide6.QtCore import QTimer
 
 try:
     from python_calamine import CalamineWorkbook
@@ -447,7 +448,7 @@ class DataLoaderMixin:
                         if total_rows:
                             self.msg_queue.put({'type': 'status', 'message': f"文件总行数: {total_rows}"})
                             if total_rows <= start_row:
-                                self.msg_queue.put({'type': 'error', 'message': "错误：起始行超出文件总行数"})
+                                self.msg_queue.put({'type': 'error', 'message': "错误：起始行（IniRow）超出文件总行数"})
                                 return
                         
                         result_df = None
@@ -560,12 +561,11 @@ class DataLoaderMixin:
 
     def browse_file(self):
         if self.file_type.get() == "raw":
-            filetypes = [("Excel files", "*.xlsx"), ("All files", "*.*")]
+            filter_str = "Excel files (*.xlsx);;All files (*.*)"
         else:
-            filetypes = [("Excel/CSV files", "*.xlsx;*.csv"), ("Excel files", "*.xlsx"), 
-                        ("CSV files", "*.csv"), ("All files", "*.*")]
+            filter_str = "Excel/CSV files (*.xlsx *.csv);;Excel files (*.xlsx);;CSV files (*.csv);;All files (*.*)"
             
-        filename = filedialog.askopenfilename(filetypes=filetypes)
+        filename, _ = QFileDialog.getOpenFileName(self, "选择文件", "", filter_str)
         if filename:
             self.file_path.set(filename)
             try:
@@ -580,11 +580,11 @@ class DataLoaderMixin:
                                 default_sheet = s_name
                                 break
                         self.sheet_combo.set(default_sheet)
-                    self.sheet_combo.configure(state='readonly')
+                    self.sheet_combo.setEnabled(True)
                 else:
-                    self.sheet_combo.configure(state='disabled')
+                    self.sheet_combo.setEnabled(False)
             except Exception as e:
-                messagebox.showerror("错误", f"读取Excel文件失败: {str(e)}")
+                QMessageBox.critical(self, "错误", f"读取Excel文件失败: {str(e)}")
 
     def update_y_options(self):
         """更新Y轴选项"""
@@ -593,20 +593,20 @@ class DataLoaderMixin:
         self.x_combo.set(columns[0])
         
         for listbox in self.y_listboxes:
-            listbox.delete(0, tk.END)
+            listbox.delete()
             for col in columns[1:]:
-                listbox.insert(tk.END, col)
+                listbox.insert('end', col)
 
     def convert_csv_to_xlsx(self):
         """将选中的 CSV 文件转换为 XLSX 文件"""
         file_path = self.file_path.get()
         if not file_path:
-            messagebox.showwarning("警告", "请先选择需要转换的 CSV 文件！")
+            QMessageBox.warning(self, "警告", "请先选择需要转换的 CSV 文件！")
             return
             
         file_ext = os.path.splitext(file_path)[1].lower()
         if file_ext != '.csv':
-            messagebox.showwarning("警告", "当前选择的文件不是 CSV 格式！")
+            QMessageBox.warning(self, "警告", "当前选择的文件不是 CSV 格式！")
             return
             
         self.set_buttons_state(False)
@@ -668,27 +668,27 @@ class DataLoaderMixin:
             msg = f"转换完成！已保存为：{os.path.basename(excel_file)}\n共写入 {total_rows_written:,} 行，耗时: {elapsed:.2f}秒"
             self.msg_queue.put({'type': 'status', 'message': msg})
             
-            self.root.after(0, lambda: messagebox.showinfo("成功", f"CSV 转换 Excel 成功！\n保存至：{excel_file}\n耗时: {elapsed:.2f}秒"))
-            self.root.after(0, lambda: self.file_path.set(excel_file))
-            self.root.after(0, self.update_file_type)
+            QTimer.singleShot(0, lambda: QMessageBox.information(self, "成功", f"CSV 转换 Excel 成功！\n保存至：{excel_file}\n耗时: {elapsed:.2f}秒"))
+            QTimer.singleShot(0, lambda: self.file_path.set(excel_file))
+            QTimer.singleShot(0, self.update_file_type)
             
         except Exception as e:
             error_msg = f"CSV 转换失败: {str(e)}"
             self.logger.error(error_msg)
             self.msg_queue.put({'type': 'error', 'message': error_msg})
-            self.root.after(0, lambda: messagebox.showerror("错误", f"CSV 转换失败：{str(e)}"))
+            QTimer.singleShot(0, lambda: QMessageBox.critical(self, "错误", f"CSV 转换失败：{str(e)}"))
         finally:
-            self.root.after(0, lambda: self.set_buttons_state(True))
+            QTimer.singleShot(0, lambda: self.set_buttons_state(True))
 
     def save_processed_raw_xlsx(self):
         """将读取并清洗后的 FLOEFD 原始数据保存为 xlsx 文件"""
         if self.result_df is None:
-            messagebox.showwarning("警告", "当前无有效数据，请先载入并读取数据！")
+            QMessageBox.warning(self, "警告", "当前无有效数据，请先载入并读取数据！")
             return
         
         file_path = self.file_path.get()
         if not file_path:
-            messagebox.showwarning("警告", "未获取到输入文件路径！")
+            QMessageBox.warning(self, "警告", "未获取到输入文件路径！")
             return
             
         try:
@@ -702,7 +702,7 @@ class DataLoaderMixin:
                 daemon=True
             ).start()
         except Exception as e:
-            messagebox.showerror("错误", f"启动保存线程失败: {str(e)}")
+            QMessageBox.showerror("错误", f"启动保存线程失败: {str(e)}")
             self.set_buttons_state(True)
 
     def _bg_save_processed_xlsx(self, save_path):
@@ -715,11 +715,11 @@ class DataLoaderMixin:
                 'type': 'status',
                 'message': f"数据处理后成功保存到：{save_path}"
             })
-            self.root.after(0, lambda: messagebox.showinfo("成功", f"数据已成功保存至：\n{os.path.basename(save_path)}"))
+            QTimer.singleShot(0, lambda: QMessageBox.information(self, "成功", f"数据已成功保存至：\n{os.path.basename(save_path)}"))
         except Exception as e:
             error_msg = f"保存 Excel 失败: {str(e)}"
             self.logger.error(error_msg)
             self.msg_queue.put({'type': 'error', 'message': error_msg})
-            self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
+            QTimer.singleShot(0, lambda: QMessageBox.critical(self, "错误", error_msg))
         finally:
-            self.root.after(0, lambda: self.set_buttons_state(True))
+            QTimer.singleShot(0, lambda: self.set_buttons_state(True))

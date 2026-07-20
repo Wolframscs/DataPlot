@@ -1,9 +1,9 @@
 import time
-import tkinter as tk
-from tkinter import messagebox
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QTimer
 
 class PlotEngineMixin:
     def clean_legend_label(self, label):
@@ -24,10 +24,13 @@ class PlotEngineMixin:
                 return label_str[:pos].rstrip()
             return label_str
 
-    def resolve_val(self, val_str, default_min, default_max):
+    def resolve_val(self, val_val, default_min, default_max):
+        if val_val is None:
+            return None
+        val_str = str(val_val).strip()
         if not val_str:
             return None
-        val_str_lower = val_str.strip().lower()
+        val_str_lower = val_str.lower()
         if val_str_lower == 'min':
             return default_min
         elif val_str_lower == 'max':
@@ -44,10 +47,13 @@ class PlotEngineMixin:
             return
         if hasattr(self, '_update_timer') and self._update_timer is not None:
             try:
-                self.root.after_cancel(self._update_timer)
+                self._update_timer.stop()
             except Exception:
                 pass
-        self._update_timer = self.root.after(300, self.update_plot)
+        self._update_timer = QTimer()
+        self._update_timer.setSingleShot(True)
+        self._update_timer.timeout.connect(self.update_plot)
+        self._update_timer.start(300)
 
     def on_cycle_compare_toggle(self):
         self.update_file_type()
@@ -144,15 +150,14 @@ class PlotEngineMixin:
                 has_scipy = False
 
             self.fig.clf()
-            canvas_widget = self.canvas.get_tk_widget()
-            w_px = canvas_widget.winfo_width()
-            h_px = canvas_widget.winfo_height()
+            w_px = self.canvas.width()
+            h_px = self.canvas.height()
             if w_px > 1 and h_px > 1:
                 self.fig.set_size_inches(w_px / self.fig.dpi, h_px / self.fig.dpi, forward=False)
             
             self.ax = self.fig.add_subplot(111)
 
-            font_size = int(self.font_size.get())
+            font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
             font_family = self.font_family.get()
             plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
             plt.rcParams['axes.unicode_minus'] = False
@@ -374,10 +379,10 @@ class PlotEngineMixin:
                             color = plt.cm.tab10(color_idx % 10) if color_map is None else color_map(color_idx % color_map.N)
                             cleaned_col = self.clean_legend_label(col)
                             line = self.ax.plot(df_c_plot[x_col], df_c_plot[col],
-                                              label=f"C{c}_{cleaned_col}",
-                                              linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
-                                              color=color,
-                                              linestyle=self.line_styles_dict[self.line_styles[0].get()])
+                                               label=f"C{c}_{cleaned_col}",
+                                               linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
+                                               color=color,
+                                               linestyle=self.line_styles_dict[self.line_styles[0].get()])
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
 
@@ -388,10 +393,10 @@ class PlotEngineMixin:
                             color = plt.cm.tab10(color_idx % 10) if color_map is None else color_map(color_idx % color_map.N)
                             cleaned_col = self.clean_legend_label(col)
                             line = ax2.plot(df_c_plot[x_col], df_c_plot[col],
-                                              label=f"C{c}_{cleaned_col}",
-                                              linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
-                                              color=color,
-                                              linestyle=self.line_styles_dict[self.line_styles[1].get()])
+                                               label=f"C{c}_{cleaned_col}",
+                                               linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
+                                               color=color,
+                                               linestyle=self.line_styles_dict[self.line_styles[1].get()])
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
 
@@ -402,10 +407,10 @@ class PlotEngineMixin:
                             color = plt.cm.tab10(color_idx % 10) if color_map is None else color_map(color_idx % color_map.N)
                             cleaned_col = self.clean_legend_label(col)
                             line = ax3.plot(df_c_plot[x_col], df_c_plot[col],
-                                              label=f"C{c}_{cleaned_col}",
-                                              linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
-                                              color=color,
-                                              linestyle=self.line_styles_dict[self.line_styles[2].get()])
+                                               label=f"C{c}_{cleaned_col}",
+                                               linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
+                                               color=color,
+                                               linestyle=self.line_styles_dict[self.line_styles[2].get()])
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
 
@@ -503,7 +508,7 @@ class PlotEngineMixin:
                         pass
 
                 if y2_data and ax2:
-                    ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=15)
+                    ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
                     try:
                         ymin = float(self.y_settings[1]['min'].get())
                         ymax = float(self.y_settings[1]['max'].get())
@@ -513,7 +518,7 @@ class PlotEngineMixin:
                         pass
 
                 if y3_data and ax3:
-                    ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=15)
+                    ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
                     try:
                         ymin = float(self.y_settings[2]['min'].get())
                         ymax = float(self.y_settings[2]['max'].get())
@@ -532,7 +537,7 @@ class PlotEngineMixin:
                 try:
                     legend_font_size = int(self.legend_font_size.get())
                 except ValueError:
-                    legend_font_size = 12
+                    legend_font_size = 18
 
                 if plot_type in ['dqdv', 'dvdq']:
                     self.ax.legend(all_lines, all_labels, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
@@ -557,7 +562,7 @@ class PlotEngineMixin:
                         ax3.add_artist(leg3)
 
             right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
-            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=0.90, bottom=0.12)
+            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=0.90, bottom=0.08)
             # Apply X-axis limits if specified
             try:
                 xmin_str = self.x_min_var.get().strip()
@@ -582,12 +587,12 @@ class PlotEngineMixin:
             self.canvas.draw()
 
         except Exception as e:
-            messagebox.showerror("错误", f"循环对比绘图失败: {str(e)}")
+            QMessageBox.critical(self, "错误", f"循环对比绘图失败: {str(e)}")
 
     def update_font_and_plot(self):
         """更新绘图字体大小并刷新图表"""
         try:
-            font_size = int(self.font_size.get())
+            font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
             font_family = self.font_family.get()
             plt.rcParams['font.size'] = font_size
             plt.rcParams['axes.labelsize'] = font_size
@@ -596,7 +601,7 @@ class PlotEngineMixin:
             plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
             plt.rcParams['axes.unicode_minus'] = False
             
-            legend_font_size = self.safe_float_convert(self.legend_font_size.get(), 12)
+            legend_font_size = self.safe_float_convert(self.legend_font_size.get(), 18.0)
             plt.rcParams['legend.fontsize'] = legend_font_size
             
             self.update_legend_only()
@@ -628,6 +633,10 @@ class PlotEngineMixin:
             self.plot_cycle_compare(plot_type=self.current_compare_type.get())
         else:
             self.plot_data()
+            
+        # 保存当前设置
+        if hasattr(self, 'save_settings'):
+            self.save_settings()
 
     def plot_y_axis(self, axis_index):
         """根据点击的按钮绘制对应的Y轴数据"""
@@ -685,19 +694,18 @@ class PlotEngineMixin:
                 self.canvas.draw()
                 return
 
-            if self.auto_downsample.get():
+            max_pts = self.max_plot_points.get()
+            if max_pts and str(max_pts).strip().lower() != 'none':
                 num_rows = len(df_to_plot)
-                max_pts = self.max_plot_points.get()
-                if max_pts != "无限制":
-                    try:
-                        max_pts_val = int(max_pts)
-                        if num_rows > max_pts_val:
-                            step = num_rows // max_pts_val
-                            if step > 1:
-                                df_to_plot = df_to_plot.iloc[::step]
-                                self.update_status(f"提示：绘图数据已自动降采样（从 {num_rows} 行降至 {len(df_to_plot)} 行），以提升显示效率")
-                    except Exception as e:
-                        self.logger.error(f"数据降采样失败: {str(e)}")
+                try:
+                    max_pts_val = int(float(max_pts))
+                    if num_rows > max_pts_val:
+                        step = num_rows // max_pts_val
+                        if step > 1:
+                            df_to_plot = df_to_plot.iloc[::step]
+                            self.update_status(f"提示：绘图数据已自动降采样（从 {num_rows} 行降至 {len(df_to_plot)} 行），以提升显示效率")
+                except Exception as e:
+                    self.logger.error(f"数据降采样失败: {str(e)}")
                 
             def set_axis_style(ax):
                 ax.tick_params(axis='both', direction='in', width=float(self.frame_width.get()), length=6, 
@@ -716,9 +724,8 @@ class PlotEngineMixin:
             if clicked_axis == 0 or clicked_axis is None:
                 self.fig.clf()
                 
-                canvas_widget = self.canvas.get_tk_widget()
-                w_px = canvas_widget.winfo_width()
-                h_px = canvas_widget.winfo_height()
+                w_px = self.canvas.width()
+                h_px = self.canvas.height()
                 if w_px > 1 and h_px > 1:
                     self.fig.set_size_inches(w_px / self.fig.dpi, h_px / self.fig.dpi, forward=False)
                     
@@ -735,7 +742,7 @@ class PlotEngineMixin:
                     return
                 
             x_col = self.x_axis.get()
-            font_size = int(self.font_size.get())
+            font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
             font_family = self.font_family.get()
             plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
             plt.rcParams['axes.unicode_minus'] = False
@@ -745,7 +752,7 @@ class PlotEngineMixin:
                 if df_to_plot[x_col].dtype == 'object' or ptypes.is_string_dtype(df_to_plot[x_col]):
                     unique_count = df_to_plot[x_col].nunique()
                     if unique_count > 1000:
-                        messagebox.showwarning("警告", f"X轴 '{x_col}' 包含大量文本值 ({unique_count}个唯一值)，直接绘制会导致界面卡死。\n请选择时间差（例如包含'时间差(s)'的列）等数值列作为X轴。")
+                        QMessageBox.warning(self, "警告", f"X轴 '{x_col}' 包含大量文本值 ({unique_count}个唯一值)，直接绘制会导致界面卡死。\n请选择时间差（例如包含'时间差(s)'的列）等数值列作为X轴。")
                         return
 
             all_lines = []
@@ -792,7 +799,7 @@ class PlotEngineMixin:
                     y2_labels_temp.append(cleaned_label)
                 all_lines.extend(y2_lines_temp)
                 all_labels.extend(y2_labels_temp)
-                ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=15)
+                ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
                 try:
                     ymin = float(self.y_settings[1]['min'].get())
                     ymax = float(self.y_settings[1]['max'].get())
@@ -816,7 +823,7 @@ class PlotEngineMixin:
                                       linestyle=self.line_styles_dict[self.line_styles[2].get()])
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=15)
+                ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
                 try:
                     ymin = float(self.y_settings[2]['min'].get())
                     ymax = float(self.y_settings[2]['max'].get())
@@ -844,7 +851,7 @@ class PlotEngineMixin:
                 try:
                     legend_font_size = int(self.legend_font_size.get())
                 except ValueError:
-                    legend_font_size = 12
+                    legend_font_size = 18
                 
                 for ax in self.fig.axes:
                     if ax.get_legend() is not None:
@@ -870,7 +877,7 @@ class PlotEngineMixin:
                 pass
                 
             right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
-            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=0.90, bottom=0.12)
+            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=0.90, bottom=0.08)
             # Apply X-axis limits if specified
             try:
                 xmin_str = self.x_min_var.get().strip()
@@ -898,50 +905,67 @@ class PlotEngineMixin:
             self.canvas.draw()
             
         except Exception as e:
-            messagebox.showerror("错误", f"绘图失败: {str(e)}")
+            QMessageBox.critical(self, "错误", f"绘图失败: {str(e)}")
 
     def get_dynamic_margins(self, y1_data, y2_data, y3_data):
         """根据当前图纸的实际像素宽度和字体大小，动态计算并返回左右边距百分比"""
         try:
-            canvas_widget = self.canvas.get_tk_widget()
-            fig_width_px = canvas_widget.winfo_width()
+            fig_width_px = self.canvas.width()
             
             if fig_width_px <= 1:
                 fig_width_px = self.fig.get_figwidth() * self.fig.dpi
             if fig_width_px <= 1:
                 fig_width_px = 1200
                 
-            font_size = int(self.font_size.get())
-            left_margin_px = max(90, int(font_size * 6.5))
+            font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
+            
+            left_mult = float(self.safe_float_convert(self.adv_left_margin_mult.get(), 4.5))
+            left_min_px = float(self.safe_float_convert(self.adv_left_margin_min_px.get(), 80.0))
+            left_min_pct = float(self.safe_float_convert(self.adv_left_margin_min_pct.get(), 0.08))
+            
+            left_margin_px = max(left_min_px, int(font_size * left_mult))
             
             if y3_data:
-                right_margin_px = max(200, int(font_size * 13.5))
-                max_right_percent = 0.85
-            elif y2_data:
-                right_margin_px = max(100, int(font_size * 7.0))
-                max_right_percent = 0.93
-            else:
-                right_margin_px = max(45, int(font_size * 3.0))
-                max_right_percent = 0.96
+                y3_mult = float(self.safe_float_convert(self.adv_y3_margin_mult.get(), 9.5))
+                y3_min_px = float(self.safe_float_convert(self.adv_y3_margin_min_px.get(), 170.0))
+                y3_max_right_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.83))
                 
-            left_margin = max(0.08, min(left_margin_px / fig_width_px, 0.2))
-            right_margin = max(0.4, min(1.0 - (right_margin_px / fig_width_px), max_right_percent))
+                right_margin_px = max(y3_min_px, int(font_size * y3_mult))
+                max_right_percent = y3_max_right_pct
+            elif y2_data:
+                y2_mult = float(self.safe_float_convert(self.adv_y2_margin_mult.get(), 4.0))
+                y2_min_px = float(self.safe_float_convert(self.adv_y2_margin_min_px.get(), 75.0))
+                y2_max_right_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.93))
+                
+                right_margin_px = max(y2_min_px, int(font_size * y2_mult))
+                max_right_percent = y2_max_right_pct
+            else:
+                y1_mult = float(self.safe_float_convert(self.adv_y1_margin_mult.get(), 1.5))
+                y1_min_px = float(self.safe_float_convert(self.adv_y1_margin_min_px.get(), 20.0))
+                y1_max_right_pct = float(self.safe_float_convert(self.adv_y1_max_right_pct.get(), 0.97))
+                
+                right_margin_px = max(y1_min_px, int(font_size * y1_mult))
+                max_right_percent = y1_max_right_pct
+                
+            left_margin = max(left_min_pct, min(left_margin_px / fig_width_px, 0.15))
+            right_margin = max(0.6, min(1.0 - (right_margin_px / fig_width_px), max_right_percent))
             return right_margin, left_margin
         except Exception:
+            y3_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.83)) if hasattr(self, 'adv_y3_max_right_pct') else 0.83
+            y2_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.93)) if hasattr(self, 'adv_y2_max_right_pct') else 0.93
+            y1_pct = float(self.safe_float_convert(self.adv_y1_max_right_pct.get(), 0.97)) if hasattr(self, 'adv_y1_max_right_pct') else 0.97
+            left_pct = float(self.safe_float_convert(self.adv_left_margin_min_pct.get(), 0.08)) if hasattr(self, 'adv_left_margin_min_pct') else 0.08
             if y3_data:
-                return 0.84, 0.08
+                return y3_pct, left_pct
             elif y2_data:
-                return 0.90, 0.08
+                return y2_pct, left_pct
             else:
-                return 0.95, 0.08
+                return y1_pct, left_pct
 
-    def on_window_resize(self, event):
-        if event.widget != self.root:
-            return
-        if hasattr(self, 'fig'):
-            canvas_widget = self.canvas.get_tk_widget()
-            w_px = canvas_widget.winfo_width()
-            h_px = canvas_widget.winfo_height()
+    def on_window_resize(self, event=None):
+        if hasattr(self, 'fig') and hasattr(self, 'canvas'):
+            w_px = self.canvas.width()
+            h_px = self.canvas.height()
             if w_px > 1 and h_px > 1:
                 self.fig.set_size_inches(w_px / self.fig.dpi, h_px / self.fig.dpi, forward=False)
                 
@@ -955,7 +979,7 @@ class PlotEngineMixin:
                 right=right_margin, 
                 left=left_margin, 
                 top=0.90,
-                bottom=0.12,
+                bottom=0.08,
                 wspace=0.2
             )
             self.canvas.draw_idle()
@@ -967,16 +991,16 @@ class PlotEngineMixin:
         if not hasattr(self, 'ax') or not self.legend_visible.get():
             return
             
-        if hasattr(self, '_legend_timer'):
+        if hasattr(self, '_legend_timer') and self._legend_timer is not None:
             try:
-                self.root.after_cancel(self._legend_timer)
+                self._legend_timer.stop()
             except Exception:
                 pass
                 
         def do_update():
             try:
                 legend_y = self.safe_float_convert(self.legend_y.get(), 1.02)
-                font_size = self.safe_float_convert(self.font_size.get(), 15)
+                font_size = self.safe_float_convert(self.font_size.get(), 18.0)
                 try:
                     legend_cols = int(self.legend_cols.get())
                 except ValueError:
@@ -984,7 +1008,7 @@ class PlotEngineMixin:
                 try:
                     legend_font_size = int(self.legend_font_size.get())
                 except ValueError:
-                    legend_font_size = 12
+                    legend_font_size = 18
                 
                 y1_data = self.y_selections[0]
                 y2_data = self.y_selections[1]
@@ -1019,10 +1043,11 @@ class PlotEngineMixin:
                 y2_labels = all_labels[y1_end:y2_end] if y2_data else []
                 y3_labels = all_labels[y2_end:] if y3_data else []
                 
+                positions = self.parse_legend_x_positions()
                 if y1_lines:
                     leg1 = self.ax.legend(y1_lines, y1_labels,
                                         loc='upper left',
-                                        bbox_to_anchor=(float(self.legend_x_positions_str.get().split(',')[0]), legend_y),
+                                        bbox_to_anchor=(positions[0], legend_y),
                                         ncol=legend_cols,
                                         frameon=False,
                                         fontsize=legend_font_size)
@@ -1031,7 +1056,7 @@ class PlotEngineMixin:
                 if y2_lines:
                     leg2 = self.ax.legend(y2_lines, y2_labels,
                                         loc='upper left',
-                                        bbox_to_anchor=(float(self.legend_x_positions_str.get().split(',')[1]), legend_y),
+                                        bbox_to_anchor=(positions[1], legend_y),
                                         ncol=legend_cols,
                                         frameon=False,
                                         fontsize=legend_font_size)
@@ -1040,7 +1065,7 @@ class PlotEngineMixin:
                 if y3_lines:
                     leg3 = self.ax.legend(y3_lines, y3_labels,
                                         loc='upper left',
-                                        bbox_to_anchor=(float(self.legend_x_positions_str.get().split(',')[2]), legend_y),
+                                        bbox_to_anchor=(positions[2], legend_y),
                                         ncol=legend_cols,
                                         frameon=False,
                                         fontsize=legend_font_size)
@@ -1051,7 +1076,10 @@ class PlotEngineMixin:
             except Exception as e:
                 self.logger.error(f"更新图例失败: {str(e)}")
 
-        self._legend_timer = self.root.after(300, do_update)
+        self._legend_timer = QTimer()
+        self._legend_timer.setSingleShot(True)
+        self._legend_timer.timeout.connect(do_update)
+        self._legend_timer.start(300)
 
     def toggle_legend(self):
         """切换图例的显示状态"""
@@ -1073,33 +1101,51 @@ class PlotEngineMixin:
         except Exception as e:
             self.logger.error(f"切换图例显示状态失败: {str(e)}")
 
+    def parse_legend_x_positions(self):
+        """解析水平图例位置，支持逗号或空格分隔"""
+        import re
+        try:
+            val = self.legend_x_positions_str.get().strip()
+            tokens = re.split(r'[\s,]+', val)
+            positions = []
+            for t in tokens:
+                try:
+                    positions.append(float(t))
+                except ValueError:
+                    pass
+            default_pos = [0.0, 0.3, 0.6]
+            while len(positions) < 3:
+                positions.append(default_pos[len(positions)])
+            return positions[:3]
+        except Exception:
+            return [0.0, 0.3, 0.6]
+
     def update_legend_positions(self):
         """更新图例位置（带防抖）"""
         if getattr(self, '_is_loading_settings', False):
             return
-        if hasattr(self, '_legend_pos_timer'):
+        if hasattr(self, '_legend_pos_timer') and self._legend_pos_timer is not None:
             try:
-                self.root.after_cancel(self._legend_pos_timer)
+                self._legend_pos_timer.stop()
             except Exception:
                 pass
                 
         def do_update():
             try:
-                positions = [float(x.strip()) for x in self.legend_x_positions_str.get().split(',')]
+                positions = self.parse_legend_x_positions()
                 if len(positions) >= 3:
                     self.update_legend_only()
             except Exception:
                 pass
 
-        self._legend_pos_timer = self.root.after(300, do_update)
+        self._legend_pos_timer = QTimer()
+        self._legend_pos_timer.setSingleShot(True)
+        self._legend_pos_timer.timeout.connect(do_update)
+        self._legend_pos_timer.start(300)
 
     def get_legend_positions(self):
         """获取图例位置列表"""
-        try:
-            positions = [float(x.strip()) for x in self.legend_x_positions_str.get().split(',')]
-            return positions[:3]
-        except Exception:
-            return [0, 0.3, 0.6]
+        return self.parse_legend_x_positions()
 
     def update_y_axis(self, axis):
         """更新指定Y轴的范围和标题（带防抖）"""
@@ -1109,9 +1155,9 @@ class PlotEngineMixin:
         if not hasattr(self, '_y_axis_timers'):
             self._y_axis_timers = {}
             
-        if axis in self._y_axis_timers:
+        if axis in self._y_axis_timers and self._y_axis_timers[axis] is not None:
             try:
-                self.root.after_cancel(self._y_axis_timers[axis])
+                self._y_axis_timers[axis].stop()
             except Exception:
                 pass
                 
@@ -1152,7 +1198,7 @@ class PlotEngineMixin:
                             
                             pad_val = 10 if axis == 0 else 15
                             target_ax.set_ylabel(self.y_settings[axis]['title'].get(),
-                                               fontsize=int(self.font_size.get()),
+                                               fontsize=int(self.safe_float_convert(self.font_size.get(), 18.0)),
                                                fontfamily=self.font_family.get(),
                                                color='black',
                                                labelpad=pad_val)
@@ -1164,4 +1210,8 @@ class PlotEngineMixin:
             except Exception as e:
                 print(f"更新Y{axis+1}轴失败: {str(e)}")
 
-        self._y_axis_timers[axis] = self.root.after(300, do_update)
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(do_update)
+        timer.start(300)
+        self._y_axis_timers[axis] = timer
