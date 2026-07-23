@@ -47,11 +47,18 @@ class SettingsMixin:
             
             'adv_y1_margin_mult': self.adv_y1_margin_mult.get(),
             'adv_y1_margin_min_px': self.adv_y1_margin_min_px.get(),
-            'adv_y1_max_right_pct': self.adv_y1_max_right_pct.get()
+            'adv_y1_max_right_pct': self.adv_y1_max_right_pct.get(),
+            
+            # Panel font, background and layout width configurations
+            'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
+            'panel_font_size': self.panel_font_size.get() if hasattr(self, 'panel_font_size') else '13',
+            'panel_width': max(200, int(getattr(self, '_saved_panel_width', 560))),
+            'canvas_width': max(300, int(getattr(self, '_saved_canvas_width', 1000))),
+            'canvas_bg': self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else '默认(白色)'
         }
         try:
-            with open('settings.json', 'w') as f:
-                json.dump(settings, f)
+            with open('settings.json', 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=4, ensure_ascii=False)
         except Exception as e:
             self.logger.error(f"保存设置失败: {str(e)}")
 
@@ -59,9 +66,9 @@ class SettingsMixin:
         """加载保存的设置"""
         self._is_loading_settings = True
         try:
-            with open('settings.json', 'r') as f:
+            with open('settings.json', 'r', encoding='utf-8') as f:
                 settings = json.load(f)
-                self.font_family.set(settings.get('font_family', 'SimHei'))
+                self.font_family.set(settings.get('font_family', 'Microsoft YaHei'))
                 self.font_size.set(settings.get('font_size', '18'))
                 self.legend_y.set(settings.get('legend_y', '1.02'))
                 self.legend_x_positions_str.set(settings.get('legend_x_positions', "0, 0.3, 0.6"))
@@ -110,6 +117,30 @@ class SettingsMixin:
                 self.adv_y1_margin_mult.set(settings.get('adv_y1_margin_mult', '1.5'))
                 self.adv_y1_margin_min_px.set(settings.get('adv_y1_margin_min_px', '20'))
                 self.adv_y1_max_right_pct.set(settings.get('adv_y1_max_right_pct', '0.97'))
+
+                # Load settings panel font & width
+                if hasattr(self, 'panel_font_family'):
+                    self.panel_font_family.set(settings.get('panel_font_family', 'Microsoft YaHei'))
+                if hasattr(self, 'panel_font_size'):
+                    self.panel_font_size.set(settings.get('panel_font_size', '13'))
+                if hasattr(self, 'update_panel_font'):
+                    self.update_panel_font()
+
+                if hasattr(self, 'canvas_bg_var'):
+                    self.canvas_bg_var.set(settings.get('canvas_bg', '默认(白色)'))
+
+                pw = int(settings.get('panel_width', 560))
+                cw = int(settings.get('canvas_width', 1000))
+                if pw < 200:
+                    pw = 560
+                if cw < 300:
+                    cw = 1000
+                self._saved_panel_width = pw
+                self._saved_canvas_width = cw
+                if hasattr(self, 'panel_width_var'):
+                    self.panel_width_var.set(str(pw))
+                if hasattr(self, 'canvas_width_var'):
+                    self.canvas_width_var.set(str(cw))
         except FileNotFoundError:
             pass  # 使用默认设置
         except Exception as e:

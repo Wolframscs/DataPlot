@@ -2,7 +2,7 @@
 ; 使用前请下载并安装 Inno Setup (推荐版本 6.x)
 
 #define MyAppName "DataPlot"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "Company"
 #define MyAppExeName "DataPlot.exe"
 
@@ -33,8 +33,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "dist\DataPlot\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; 依赖文件夹及全部内容
 Source: "dist\DataPlot\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; 测试数据和预设配置
-Source: "TestData\*"; DestDir: "{app}\TestData"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 预设配置
 Source: "settings.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

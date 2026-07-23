@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QTextEdit, QMessageBox, QFileDialog,
     QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout
 )
-from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Slot, QEvent, QObject
 from PySide6.QtGui import QIcon, QFont
 
 class CustomLineEdit(QLineEdit):
@@ -171,10 +171,35 @@ def bind_combobox(widget, var):
     var.trace_add('write', on_var_changed)
     on_var_changed()
 
+class CanvasResizeFilter(QObject):
+    def __init__(self, gui):
+        super().__init__()
+        self.gui = gui
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Resize:
+            if hasattr(self.gui, 'plot_display_widget') and obj == self.gui.plot_display_widget:
+                if getattr(self.gui, '_is_plotting', False) or getattr(self.gui, '_is_syncing_splitter', False):
+                    return super().eventFilter(obj, event)
+                w = event.size().width()
+                saved = getattr(self.gui, '_saved_canvas_width', 0)
+                if w > 50 and abs(w - saved) > 2:
+                    self.gui._saved_canvas_width = w
+                    if hasattr(self.gui, 'canvas_width_var'):
+                        self.gui.canvas_width_var.set(str(w))
+                    self.gui._is_syncing_splitter = True
+                    try:
+                        if hasattr(self.gui, 'canvas_width_entry') and self.gui.canvas_width_entry:
+                            if self.gui.canvas_width_entry.text() != str(w):
+                                self.gui.canvas_width_entry.setText(str(w))
+                    finally:
+                        self.gui._is_syncing_splitter = False
+        return super().eventFilter(obj, event)
+
 class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot")
+        self.setWindowTitle("DataPlot v1.0.4")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -184,11 +209,12 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.CHUNK_SIZE = 100000
         self.msg_queue = queue.Queue()
         
-        # 设置日志
+        # 设置日志（指定 UTF-8 编码防止中文乱码）
         logging.basicConfig(
             filename='DataPlot.log',
             level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            encoding='utf-8'
         )
         self.logger = logging.getLogger('DataPlot')
         
@@ -203,7 +229,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.line_styles = []
         self.color_schemes = []
         
-        self.version = "1.0.0"
+        self.version = "1.0.4"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False
@@ -235,7 +261,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.filter_type_var = Var("无")
         self.filter_window_var = Var("15")
         self.sg_poly_var = Var("2")
-        self.compare_x_var = Var("容量（计算）")
+        self.compare_x_var = Var("循环时间（计算）")
         self.current_compare_type = Var("regular")
         self.cc_polarity_var = Var("正")
         self.dqdv_min_var = Var("")
@@ -248,13 +274,20 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.cycle_filter = Var("全部")
         self.step_filter = Var("全部")
         
-        self.font_family = Var("SimHei")
+        self.font_family = Var("Microsoft YaHei")
         self.legend_y = Var("1.02")
         self.legend_x_positions_str = Var("0, 0.3, 0.7")
         self.legend_visible = Var(True)
         self.font_size = Var("18")
         self.frame_width = Var("1.5")
         self.line_width = Var("1.5")
+        
+        # Settings Panel Font & Layout
+        self.panel_font_family = Var("Microsoft YaHei")
+        self.panel_font_size = Var("13")
+        self.panel_width_var = Var("560")
+        self.canvas_width_var = Var("1000")
+        self.canvas_bg_var = Var("默认(白色)")
         
         # Advanced margin variables
         self.adv_left_margin_mult = Var("4.5")
@@ -298,6 +331,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         # Connect Variable Traces
         self.font_family.trace_add('write', lambda *args: self.update_font_and_plot())
         self.font_size.trace_add('write', lambda *args: self.update_font_and_plot())
+        self.panel_font_family.trace_add('write', lambda *args: self.update_panel_font())
+        self.panel_font_size.trace_add('write', lambda *args: self.update_panel_font())
         self.legend_y.trace_add('write', lambda *args: self.update_legend_only())
         self.legend_font_size.trace_add('write', lambda *args: self.update_legend_only())
         self.legend_cols.trace_add('write', lambda *args: self.update_legend_only())
@@ -441,16 +476,25 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         main_layout.setContentsMargins(10, 10, 10, 10)
         
         splitter = QSplitter(Qt.Horizontal, central_widget)
+        self.splitter = splitter
+        self.splitter.setCollapsible(0, False)
+        self.splitter.setCollapsible(1, False)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.splitterMoved.connect(self.on_splitter_moved)
         main_layout.addWidget(splitter)
         
         # Left Panel (Controls) Scroll Area
         left_scroll = QScrollArea(splitter)
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setMinimumWidth(500)
         splitter.addWidget(left_scroll)
         
         control_widget = QWidget()
         control_widget.setObjectName("controlWidget")
+        control_widget.setMinimumWidth(480)
+        self.control_widget = control_widget
         left_scroll.setWidget(control_widget)
         
         control_layout = QVBoxLayout(control_widget)
@@ -578,67 +622,75 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         battery_grid = QGridLayout(battery_content)
         battery_grid.setContentsMargins(0, 5, 0, 0)
         
-        battery_grid.addWidget(QLabel("循环列:"), 0, 0)
-        self.cycle_col_combo = CustomComboBox()
-        bind_combobox(self.cycle_col_combo, self.cycle_col)
-        self.cycle_col_combo.currentIndexChanged.connect(self.on_cycle_col_changed)
-        battery_grid.addWidget(self.cycle_col_combo, 0, 1)
-        
-        battery_grid.addWidget(QLabel("工步列:"), 0, 2)
-        self.step_col_combo = CustomComboBox()
-        bind_combobox(self.step_col_combo, self.step_col)
-        self.step_col_combo.currentIndexChanged.connect(self.on_step_col_changed)
-        battery_grid.addWidget(self.step_col_combo, 0, 3)
-        
-        battery_grid.addWidget(QLabel("时间列:"), 0, 4)
-        self.time_col_combo = CustomComboBox()
-        bind_combobox(self.time_col_combo, self.time_col)
-        self.time_col_combo.currentIndexChanged.connect(self.on_time_col_changed)
-        battery_grid.addWidget(self.time_col_combo, 0, 5)
-        
-        battery_grid.addWidget(QLabel("循环筛选:"), 1, 0)
-        self.cycle_filter_combo = CustomComboBox()
-        bind_combobox(self.cycle_filter_combo, self.cycle_filter)
-        battery_grid.addWidget(self.cycle_filter_combo, 1, 1)
-        
-        battery_grid.addWidget(QLabel("工步筛选:"), 1, 2)
-        self.step_filter_combo = CustomComboBox()
-        bind_combobox(self.step_filter_combo, self.step_filter)
-        self.step_filter_combo.currentIndexChanged.connect(lambda: [self.update_listboxes(), self.delayed_update()])
-        battery_grid.addWidget(self.step_filter_combo, 1, 3)
-        
-        self.battery_calc_btn = QPushButton("应用")
-        self.battery_calc_btn.clicked.connect(self.update_plot)
-        battery_grid.addWidget(self.battery_calc_btn, 1, 5)
-        
-        self.cycle_compare_cb = QCheckBox("启用循环对比")
-        bind_checkbox(self.cycle_compare_cb, self.cycle_compare_var)
-        self.cycle_compare_cb.toggled.connect(lambda c: self.on_cycle_compare_toggle())
-        battery_grid.addWidget(self.cycle_compare_cb, 2, 0, 1, 2)
-        
-        battery_grid.addWidget(QLabel("电压列:"), 2, 2)
+        # Row 0: Voltage Column, Current Column, Scale
+        battery_grid.addWidget(QLabel("电压列:"), 0, 0)
         self.voltage_col_combo = CustomComboBox()
         bind_combobox(self.voltage_col_combo, self.voltage_col)
         self.voltage_col_combo.currentIndexChanged.connect(lambda: self.delayed_update())
-        battery_grid.addWidget(self.voltage_col_combo, 2, 3)
+        battery_grid.addWidget(self.voltage_col_combo, 0, 1)
         
-        battery_grid.addWidget(QLabel("电流列:"), 2, 4)
+        battery_grid.addWidget(QLabel("电流列:"), 0, 2)
         self.current_col_combo = CustomComboBox()
         bind_combobox(self.current_col_combo, self.current_col)
         self.current_col_combo.currentIndexChanged.connect(lambda: self.delayed_update())
-        battery_grid.addWidget(self.current_col_combo, 2, 5)
+        battery_grid.addWidget(self.current_col_combo, 0, 3)
         
-        battery_grid.addWidget(QLabel("电压比例:"), 3, 2)
+        battery_grid.addWidget(QLabel("比例:"), 0, 4)
+        scale_widget = QWidget()
+        scale_layout = QHBoxLayout(scale_widget)
+        scale_layout.setContentsMargins(0, 0, 0, 0)
+        scale_layout.setSpacing(4)
+        scale_layout.setAlignment(Qt.AlignLeft)
+        
         self.voltage_scale_entry = QLineEdit()
+        self.voltage_scale_entry.setFixedWidth(45)
         bind_lineedit(self.voltage_scale_entry, self.voltage_scale_var)
+        self.voltage_scale_entry.textChanged.connect(lambda: self.delayed_update())
         self.voltage_scale_entry.returnPressed.connect(lambda: self.delayed_update())
-        battery_grid.addWidget(self.voltage_scale_entry, 3, 3)
         
-        battery_grid.addWidget(QLabel("电流比例:"), 3, 4)
         self.current_scale_entry = QLineEdit()
+        self.current_scale_entry.setFixedWidth(45)
         bind_lineedit(self.current_scale_entry, self.current_scale_var)
+        self.current_scale_entry.textChanged.connect(lambda: self.delayed_update())
         self.current_scale_entry.returnPressed.connect(lambda: self.delayed_update())
-        battery_grid.addWidget(self.current_scale_entry, 3, 5)
+        
+        scale_layout.addWidget(self.voltage_scale_entry)
+        scale_layout.addWidget(QLabel("/"))
+        scale_layout.addWidget(self.current_scale_entry)
+        scale_layout.addStretch()
+        battery_grid.addWidget(scale_widget, 0, 5)
+
+        # Row 1: Cycle Column, Step Column, Time Column
+        battery_grid.addWidget(QLabel("循环列:"), 1, 0)
+        self.cycle_col_combo = CustomComboBox()
+        bind_combobox(self.cycle_col_combo, self.cycle_col)
+        self.cycle_col_combo.currentIndexChanged.connect(self.on_cycle_col_changed)
+        battery_grid.addWidget(self.cycle_col_combo, 1, 1)
+        
+        battery_grid.addWidget(QLabel("工步列:"), 1, 2)
+        self.step_col_combo = CustomComboBox()
+        bind_combobox(self.step_col_combo, self.step_col)
+        self.step_col_combo.currentIndexChanged.connect(self.on_step_col_changed)
+        battery_grid.addWidget(self.step_col_combo, 1, 3)
+        
+        battery_grid.addWidget(QLabel("时间列:"), 1, 4)
+        self.time_col_combo = CustomComboBox()
+        bind_combobox(self.time_col_combo, self.time_col)
+        self.time_col_combo.currentIndexChanged.connect(self.on_time_col_changed)
+        battery_grid.addWidget(self.time_col_combo, 1, 5)
+        
+        # Row 2: Cycle Filter, Step Filter
+        battery_grid.addWidget(QLabel("循环筛选:"), 2, 0)
+        self.cycle_filter_combo = CustomComboBox()
+        bind_combobox(self.cycle_filter_combo, self.cycle_filter)
+        self.cycle_filter_combo.currentIndexChanged.connect(lambda: self.on_cycle_filter_changed())
+        battery_grid.addWidget(self.cycle_filter_combo, 2, 1)
+        
+        battery_grid.addWidget(QLabel("工步筛选:"), 2, 2)
+        self.step_filter_combo = CustomComboBox()
+        bind_combobox(self.step_filter_combo, self.step_filter)
+        self.step_filter_combo.currentIndexChanged.connect(lambda: self.on_step_filter_changed())
+        battery_grid.addWidget(self.step_filter_combo, 2, 3)
         
         battery_box_lay = QVBoxLayout(self.battery_filter_frame)
         battery_box_lay.setContentsMargins(10, 0, 10, 10)
@@ -648,11 +700,12 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         control_layout.addWidget(self.battery_filter_frame)
         
         # 4. Cycle Compare Configuration GroupBox
-        self.cycle_compare_frame = QGroupBox("循环对比配置")
+        self.cycle_compare_frame = QGroupBox("启用循环对比")
         self.cycle_compare_frame.setCheckable(True)
-        self.cycle_compare_frame.setChecked(True)
+        self.cycle_compare_frame.setChecked(bool(self.cycle_compare_var.get()))
         
         compare_content = QWidget()
+        compare_content.setVisible(self.cycle_compare_frame.isChecked())
         compare_grid = QGridLayout(compare_content)
         compare_grid.setContentsMargins(0, 5, 0, 0)
         
@@ -766,7 +819,15 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         compare_box_lay = QVBoxLayout(self.cycle_compare_frame)
         compare_box_lay.setContentsMargins(10, 0, 10, 10)
         compare_box_lay.addWidget(compare_content)
-        self.cycle_compare_frame.toggled.connect(compare_content.setVisible)
+        
+        def on_compare_group_toggled(checked):
+            if self.cycle_compare_var.get() != checked:
+                self.cycle_compare_var.set(checked)
+            compare_content.setVisible(checked)
+            self.on_cycle_compare_toggle()
+
+        self.cycle_compare_frame.toggled.connect(on_compare_group_toggled)
+        self.cycle_compare_var.trace_add('write', lambda *args: self.cycle_compare_frame.setChecked(bool(self.cycle_compare_var.get())))
         
         control_layout.addWidget(self.cycle_compare_frame)
         
@@ -807,8 +868,9 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         x_axis_layout.addWidget(self.x_max_entry)
         
         x_axis_layout.addWidget(QLabel("标题:"))
-        self.x_title = QLineEdit("Time/s")
+        self.x_title = QLineEdit("")
         self.x_title.setFixedWidth(100)
+        self.x_title.textChanged.connect(lambda: self.delayed_update())
         self.x_title.returnPressed.connect(lambda: self.update_plot())
         x_axis_layout.addWidget(self.x_title)
         
@@ -821,6 +883,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         y_axis_layout.setContentsMargins(0, 0, 0, 0)
         
         self.y_listboxes = []
+        self.y_filter_entries = []
         self.y_selections = [[], [], []]
         
         for i in range(3):
@@ -828,7 +891,20 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             pane.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
             pane_lay = QVBoxLayout(pane)
             pane_lay.setContentsMargins(2, 2, 2, 2)
-            pane_lay.addWidget(QLabel(f"Y{i+1}:"))
+            
+            header_lay = QHBoxLayout()
+            header_lay.setContentsMargins(0, 0, 0, 0)
+            lbl = QLabel(f"Y{i+1}:")
+            lbl.setFixedWidth(24)
+            header_lay.addWidget(lbl)
+
+            filter_entry = QLineEdit()
+            filter_entry.setPlaceholderText("筛选...")
+            filter_entry.textChanged.connect(lambda text, idx=i: self.filter_y_listbox(idx, text))
+            header_lay.addWidget(filter_entry)
+            self.y_filter_entries.append(filter_entry)
+
+            pane_lay.addLayout(header_lay)
             
             listbox = CustomListWidget()
             listbox.bind('<<ListboxSelect>>', self.on_selection_change)
@@ -947,7 +1023,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         # Legend Font, Size (QLineEdit), Column count
         plot_config_content_lay.addWidget(QLabel("图例字体:"), 1, 0)
         self.font_combo = CustomComboBox()
-        self.font_combo.addItems(["SimHei", "SimSun", "KaiTi", "FangSong", "Arial"])
+        self.font_combo.addItems(["Microsoft YaHei", "SimHei", "SimSun", "KaiTi", "FangSong", "Arial", "Calibri", "Times New Roman", "Segoe UI", "Tahoma"])
         bind_combobox(self.font_combo, self.font_family)
         plot_config_content_lay.addWidget(self.font_combo, 1, 1)
         
@@ -1061,18 +1137,21 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         adv_grid.addWidget(QLabel("左侧边距 倍数:"), 0, 0)
         self.adv_left_mult_entry = QLineEdit()
         bind_lineedit(self.adv_left_mult_entry, self.adv_left_margin_mult)
+        self.adv_left_mult_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_left_mult_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_left_mult_entry, 0, 1)
         
         adv_grid.addWidget(QLabel("最小像素:"), 0, 2)
         self.adv_left_min_px_entry = QLineEdit()
         bind_lineedit(self.adv_left_min_px_entry, self.adv_left_margin_min_px)
+        self.adv_left_min_px_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_left_min_px_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_left_min_px_entry, 0, 3)
         
         adv_grid.addWidget(QLabel("最小比例:"), 0, 4)
         self.adv_left_min_pct_entry = QLineEdit()
         bind_lineedit(self.adv_left_min_pct_entry, self.adv_left_margin_min_pct)
+        self.adv_left_min_pct_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_left_min_pct_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_left_min_pct_entry, 0, 5)
         
@@ -1080,18 +1159,21 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         adv_grid.addWidget(QLabel("Y3右边距 倍数:"), 1, 0)
         self.adv_y3_mult_entry = QLineEdit()
         bind_lineedit(self.adv_y3_mult_entry, self.adv_y3_margin_mult)
+        self.adv_y3_mult_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y3_mult_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y3_mult_entry, 1, 1)
         
         adv_grid.addWidget(QLabel("最小像素:"), 1, 2)
         self.adv_y3_min_px_entry = QLineEdit()
         bind_lineedit(self.adv_y3_min_px_entry, self.adv_y3_margin_min_px)
+        self.adv_y3_min_px_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y3_min_px_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y3_min_px_entry, 1, 3)
         
         adv_grid.addWidget(QLabel("最大比例:"), 1, 4)
         self.adv_y3_max_pct_entry = QLineEdit()
         bind_lineedit(self.adv_y3_max_pct_entry, self.adv_y3_max_right_pct)
+        self.adv_y3_max_pct_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y3_max_pct_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y3_max_pct_entry, 1, 5)
         
@@ -1099,18 +1181,21 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         adv_grid.addWidget(QLabel("Y2右边距 倍数:"), 2, 0)
         self.adv_y2_mult_entry = QLineEdit()
         bind_lineedit(self.adv_y2_mult_entry, self.adv_y2_margin_mult)
+        self.adv_y2_mult_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y2_mult_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y2_mult_entry, 2, 1)
         
         adv_grid.addWidget(QLabel("最小像素:"), 2, 2)
         self.adv_y2_min_px_entry = QLineEdit()
         bind_lineedit(self.adv_y2_min_px_entry, self.adv_y2_margin_min_px)
+        self.adv_y2_min_px_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y2_min_px_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y2_min_px_entry, 2, 3)
         
         adv_grid.addWidget(QLabel("最大比例:"), 2, 4)
         self.adv_y2_max_pct_entry = QLineEdit()
         bind_lineedit(self.adv_y2_max_pct_entry, self.adv_y2_max_right_pct)
+        self.adv_y2_max_pct_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y2_max_pct_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y2_max_pct_entry, 2, 5)
         
@@ -1118,25 +1203,70 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         adv_grid.addWidget(QLabel("Y1右边距 倍数:"), 3, 0)
         self.adv_y1_mult_entry = QLineEdit()
         bind_lineedit(self.adv_y1_mult_entry, self.adv_y1_margin_mult)
+        self.adv_y1_mult_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y1_mult_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y1_mult_entry, 3, 1)
         
         adv_grid.addWidget(QLabel("最小像素:"), 3, 2)
         self.adv_y1_min_px_entry = QLineEdit()
         bind_lineedit(self.adv_y1_min_px_entry, self.adv_y1_margin_min_px)
+        self.adv_y1_min_px_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y1_min_px_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y1_min_px_entry, 3, 3)
         
         adv_grid.addWidget(QLabel("最大比例:"), 3, 4)
         self.adv_y1_max_pct_entry = QLineEdit()
         bind_lineedit(self.adv_y1_max_pct_entry, self.adv_y1_max_right_pct)
+        self.adv_y1_max_pct_entry.textChanged.connect(lambda: self.delayed_update())
         self.adv_y1_max_pct_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_y1_max_pct_entry, 3, 5)
         
-        # Row 4: Reset Button
-        self.adv_reset_btn = QPushButton("恢复默认设置")
+        # Row 4: Panel Font Family, Size & Width
+        adv_grid.addWidget(QLabel("面板字体:"), 4, 0)
+        self.panel_font_combo = CustomComboBox()
+        self.panel_font_combo.addItems(["Microsoft YaHei", "SimHei", "SimSun", "KaiTi", "FangSong", "Arial", "Calibri", "Times New Roman", "Segoe UI", "Tahoma"])
+        bind_combobox(self.panel_font_combo, self.panel_font_family)
+        adv_grid.addWidget(self.panel_font_combo, 4, 1)
+        
+        adv_grid.addWidget(QLabel("面板字号:"), 4, 2)
+        self.panel_size_combo = CustomComboBox()
+        self.panel_size_combo.addItems(["10", "11", "12", "13", "14", "15", "16", "17", "18"])
+        bind_combobox(self.panel_size_combo, self.panel_font_size)
+        adv_grid.addWidget(self.panel_size_combo, 4, 3)
+
+        adv_grid.addWidget(QLabel("面板宽度:"), 4, 4)
+        self.panel_width_entry = QLineEdit()
+        bind_lineedit(self.panel_width_entry, self.panel_width_var)
+        self.panel_width_entry.editingFinished.connect(self.on_panel_width_entry_changed)
+        self.panel_width_entry.returnPressed.connect(self.on_panel_width_entry_changed)
+        adv_grid.addWidget(self.panel_width_entry, 4, 5)
+
+        # Row 5: Canvas Width & Canvas Background (Auto-applied)
+        adv_grid.addWidget(QLabel("画布宽度:"), 5, 0)
+        self.canvas_width_entry = QLineEdit()
+        bind_lineedit(self.canvas_width_entry, self.canvas_width_var)
+        self.canvas_width_entry.editingFinished.connect(self.on_canvas_width_entry_changed)
+        self.canvas_width_entry.returnPressed.connect(self.on_canvas_width_entry_changed)
+        adv_grid.addWidget(self.canvas_width_entry, 5, 1)
+
+        adv_grid.addWidget(QLabel("画布背景:"), 5, 2)
+        self.canvas_bg_combo = CustomComboBox()
+        self.canvas_bg_combo.addItems(["默认(白色)", "灰色", "黑色"])
+        bind_combobox(self.canvas_bg_combo, self.canvas_bg_var)
+        self.canvas_bg_var.trace_add('write', lambda *args: [self.apply_canvas_background(), self.update_plot()])
+        adv_grid.addWidget(self.canvas_bg_combo, 5, 3, 1, 3)
+
+        # Row 6: Buttons Layout (默认设置 & 保存设置)
+        btn_layout = QHBoxLayout()
+        self.adv_reset_btn = QPushButton("默认设置")
         self.adv_reset_btn.clicked.connect(self.reset_advanced_settings)
-        adv_grid.addWidget(self.adv_reset_btn, 4, 0, 1, 6)
+        btn_layout.addWidget(self.adv_reset_btn)
+
+        self.adv_save_btn = QPushButton("保存设置")
+        self.adv_save_btn.clicked.connect(self.save_advanced_settings)
+        btn_layout.addWidget(self.adv_save_btn)
+
+        adv_grid.addLayout(btn_layout, 6, 0, 1, 6)
         
         adv_box_lay = QVBoxLayout(self.adv_groupbox)
         adv_box_lay.setContentsMargins(10, 0, 10, 10)
@@ -1169,11 +1299,16 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
 
         # Right Panel (Matplotlib Canvas)
         plot_display_widget = QWidget(splitter)
+        self.plot_display_widget = plot_display_widget
+        self.canvas_resize_filter = CanvasResizeFilter(self)
+        plot_display_widget.installEventFilter(self.canvas_resize_filter)
         plot_display_lay = QVBoxLayout(plot_display_widget)
         plot_display_lay.setContentsMargins(5, 5, 5, 5)
         
         self.fig = plt.figure(figsize=(10, 8))
         self.ax = self.fig.add_subplot(111)
+        self.ax.set_xticks([])
+        self.ax.set_yticks([])
         self.canvas = FigureCanvas(self.fig)
         plot_display_lay.addWidget(self.canvas)
         
@@ -1185,9 +1320,10 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.current_axes = {'y1': self.ax}
         
         splitter.addWidget(plot_display_widget)
-        splitter.setSizes([520, 1140])   # Left sidebar width 460, right canvas width 1140
+        splitter.setSizes([560, 1000])   # Left panel width 560, right canvas width 1000
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+        self.resize(1600, 900)
 
     def check_queue(self):
         """检查消息队列以在主线程中安全地更新 UI"""
@@ -1252,7 +1388,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         """控制交互按钮状态与光标形状，避免重复并发操作"""
         self.process_btn.setEnabled(enabled)
         self.browse_btn.setEnabled(enabled)
-        self.battery_calc_btn.setEnabled(enabled)
+        if hasattr(self, 'battery_calc_btn'):
+            self.battery_calc_btn.setEnabled(enabled)
         self.clear_btn.setEnabled(enabled)
         self.select_all_btn.setEnabled(enabled)
         self.plot_btn.setEnabled(enabled)
@@ -1309,10 +1446,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         # Visibility controls
         if self.file_type.get() == "battery":
             self.battery_filter_frame.setVisible(True)
-            if self.cycle_compare_var.get():
-                self.cycle_compare_frame.setVisible(True)
-            else:
-                self.cycle_compare_frame.setVisible(False)
+            self.cycle_compare_frame.setVisible(True)
         else:
             self.battery_filter_frame.setVisible(False)
             self.cycle_compare_frame.setVisible(False)
@@ -1345,8 +1479,10 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             self.dqdv_title_var.set("")
 
     def on_cycle_col_changed(self, event=None):
-        if self.result_df is not None:
-            cycle_col_name = self.cycle_col.get()
+        if self.result_df is not None and hasattr(self, 'cycle_col_combo'):
+            cycle_col_name = self.cycle_col_combo.currentText()
+            if hasattr(self, 'cycle_col'):
+                self.cycle_col.set(cycle_col_name)
             if cycle_col_name in self.result_df.columns:
                 try:
                     unique_vals = self.result_df[cycle_col_name].dropna().unique()
@@ -1369,29 +1505,54 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                     cycles = ['全部'] + [str(x) for x in self.result_df[cycle_col_name].dropna().unique()]
                 self.cycle_filter_combo['values'] = cycles
                 self.cycle_filter_combo.set('全部')
+                
+                time_col_name = self.time_col_combo.currentText() if hasattr(self, 'time_col_combo') else None
+                step_col_name = self.step_col_combo.currentText() if hasattr(self, 'step_col_combo') else None
+                self.recompute_all_time_diffs(self.result_df, time_col_name, cycle_col_name, step_col_name)
+                self.update_listboxes()
                 self.delayed_update()
 
     def on_step_col_changed(self, event=None):
-        if self.result_df is not None:
-            step_col_name = self.step_col.get()
+        if self.result_df is not None and hasattr(self, 'step_col_combo'):
+            step_col_name = self.step_col_combo.currentText()
+            if hasattr(self, 'step_col'):
+                self.step_col.set(step_col_name)
             if step_col_name in self.result_df.columns:
                 steps = ['全部'] + [str(x) for x in self.result_df[step_col_name].dropna().unique()]
                 self.step_filter_combo['values'] = steps
                 self.step_filter_combo.set('全部')
+
+                time_col_name = self.time_col_combo.currentText() if hasattr(self, 'time_col_combo') else None
+                cycle_col_name = self.cycle_col_combo.currentText() if hasattr(self, 'cycle_col_combo') else None
+                self.recompute_all_time_diffs(self.result_df, time_col_name, cycle_col_name, step_col_name)
+                self.update_listboxes()
                 self.delayed_update()
 
     def on_time_col_changed(self, event=None):
-        if self.result_df is not None:
-            time_col_name = self.time_col.get()
+        if self.result_df is not None and hasattr(self, 'time_col_combo'):
+            time_col_name = self.time_col_combo.currentText()
+            if hasattr(self, 'time_col'):
+                self.time_col.set(time_col_name)
+            self._time_col_just_changed = True
             if time_col_name in self.result_df.columns:
-                new_col_name = f"{time_col_name}_时间差(s)"
-                if new_col_name not in self.result_df.columns:
-                    self.set_buttons_state(False)
-                    self.update_status(f"正在后台计算 {time_col_name} 的时间差(s)...")
-                    threading.Thread(target=self._bg_calc_time_diff, args=(time_col_name, new_col_name), daemon=True).start()
-                    return
+                base_time_name = time_col_name.replace('_时间差(s)', '')
+                new_col_name = f"{base_time_name}_时间差(s)"
+                self.set_buttons_state(False)
+                self.update_status(f"正在后台计算 {time_col_name} 的时间差(s)...")
+                threading.Thread(target=self._bg_calc_time_diff, args=(time_col_name, new_col_name), daemon=True).start()
+                return
             self.update_listboxes()
             self.delayed_update()
+
+    def clear_canvas_and_update(self):
+        if hasattr(self, 'fig'):
+            self.fig.clf()
+            self.ax = self.fig.add_subplot(111)
+            self.ax.set_xticks([])
+            self.ax.set_yticks([])
+            self.canvas.draw()
+        self.update_listboxes()
+        self.delayed_update()
 
     def clear_all_selections(self):
         """清除所有选择"""
@@ -1401,6 +1562,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         if hasattr(self, 'fig'):
             self.fig.clf()
             self.ax = self.fig.add_subplot(111)
+            self.ax.set_xticks([])
+            self.ax.set_yticks([])
             self.canvas.draw()
 
     def select_all_y(self):
@@ -1417,6 +1580,19 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                 listbox.selection_set(i)
         self.y_selections[0] = [listbox.get(i) for i in listbox.curselection()]
         self.update_plot()
+
+    def filter_y_listbox(self, idx, text):
+        """筛选 Y1/Y2/Y3 列表框中的列名"""
+        if hasattr(self, 'y_listboxes') and idx < len(self.y_listboxes):
+            listbox = self.y_listboxes[idx]
+            filter_txt = str(text).strip().lower()
+            for row in range(listbox.count()):
+                item = listbox.item(row)
+                if item:
+                    if not filter_txt or filter_txt in item.text().lower():
+                        item.setHidden(False)
+                    else:
+                        item.setHidden(True)
 
     def safe_float_convert(self, value, default=0.0):
         """安全地转换浮点数"""
@@ -1471,6 +1647,13 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             if cols_to_drop:
                 self.result_df = self.result_df.drop(columns=cols_to_drop)
             
+            if self.file_type.get() == "battery":
+                time_col_name = self.time_col.get() if hasattr(self, 'time_col') else None
+                cycle_col_name = self.cycle_col.get() if hasattr(self, 'cycle_col') else None
+                step_col_name = self.step_col.get() if hasattr(self, 'step_col') else None
+                if time_col_name and time_col_name in self.result_df.columns:
+                    self.recompute_all_time_diffs(self.result_df, time_col_name, cycle_col_name, step_col_name)
+
             self.result_df['Index'] = self.result_df.index
             columns = ['Index'] + [col for col in self.result_df.columns if col != 'Index']
             
@@ -1482,37 +1665,89 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                     columns.append('循环时间（计算）')
                     
             if self.file_type.get() == "battery":
-                step_val = self.step_filter.get()
+                step_val = self.step_filter_combo.currentText() if hasattr(self, 'step_filter_combo') else self.step_filter.get()
                 if step_val != "全部" and step_val != "":
                     if '工步时间（计算）' not in columns:
                         columns.append('工步时间（计算）')
             
-            self.x_combo['values'] = columns
+            self.x_combo.blockSignals(True)
+            try:
+                self.x_combo['values'] = columns
+            finally:
+                self.x_combo.blockSignals(False)
+
             if is_compare:
-                self.compare_x_combo['values'] = columns
-                if self.compare_x_var.get() not in columns:
-                    self.compare_x_combo.set('容量（计算）')
+                self.compare_x_combo.blockSignals(True)
+                try:
+                    self.compare_x_combo['values'] = columns
+                    target_cmp_x = self.compare_x_var.get()
+                    if not target_cmp_x or target_cmp_x not in columns:
+                        target_cmp_x = '循环时间（计算）'
+                    self.compare_x_combo.set(target_cmp_x)
+                    self.compare_x_var.set(target_cmp_x)
+                finally:
+                    self.compare_x_combo.blockSignals(False)
             
             if self.file_type.get() == "battery" and hasattr(self, 'time_col') and self.time_col.get():
+                time_col_name = self.time_col.get()
+                base_time_name = time_col_name.replace('_时间差(s)', '')
+                time_diff_col = f"{base_time_name}_时间差(s)"
+
                 if is_compare:
-                    self.x_combo.set('容量（计算）')
-                else:
-                    time_col_name = self.time_col.get()
-                    time_diff_col = f"{time_col_name}_时间差(s)"
-                    if time_diff_col in self.result_df.columns:
-                        self.x_combo.set(time_diff_col)
-                    elif time_col_name in self.result_df.columns:
-                        self.x_combo.set(time_col_name)
+                    cur_cmp_x = self.compare_x_var.get()
+                    if cur_cmp_x and cur_cmp_x in columns:
+                        self.x_combo.set(cur_cmp_x)
                     else:
-                        self.x_combo.set(columns[0])
+                        self.x_combo.set('循环时间（计算）')
+                else:
+                    target_x = None
+                    if getattr(self, '_time_col_just_changed', False):
+                        if time_diff_col in columns:
+                            target_x = time_diff_col
+                        elif time_col_name in columns:
+                            target_x = time_col_name
+                        self._time_col_just_changed = False
+
+                    if not target_x:
+                        prev_x = getattr(self, '_prev_regular_x_col', '')
+                        if prev_x and prev_x in columns:
+                            target_x = prev_x
+                        elif self.x_axis.get() and self.x_axis.get() in columns:
+                            target_x = self.x_axis.get()
+                        elif time_diff_col in columns:
+                            target_x = time_diff_col
+                        elif time_col_name in columns:
+                            target_x = time_col_name
+                        else:
+                            target_x = columns[0]
+
+                    self.x_combo.set(target_x)
+                    self.x_axis.set(target_x)
             else:
                 self.x_combo.set(columns[0])
             
+            saved_selections = [list(sel) for sel in self.y_selections]
             for i, listbox in enumerate(self.y_listboxes):
-                listbox.delete()
-                for col in self.result_df.columns:
-                    if col != 'Index':
-                        listbox.insert('end', col)
+                listbox.blockSignals(True)
+                try:
+                    listbox.delete()
+                    target_sel = saved_selections[i] if i < len(saved_selections) else []
+                    new_sel = []
+                    filter_txt = self.y_filter_entries[i].text().strip().lower() if (hasattr(self, 'y_filter_entries') and i < len(self.y_filter_entries)) else ""
+                    for col in self.result_df.columns:
+                        if col != 'Index':
+                            listbox.insert('end', col)
+                            idx = listbox.count() - 1
+                            item = listbox.item(idx)
+                            if item:
+                                if col in target_sel:
+                                    item.setSelected(True)
+                                    new_sel.append(col)
+                                if filter_txt and filter_txt not in col.lower():
+                                    item.setHidden(True)
+                    self.y_selections[i] = new_sel
+                finally:
+                    listbox.blockSignals(False)
                     
         except Exception as e:
             self.update_status(f"更新列表失败: {str(e)}")
@@ -1539,6 +1774,320 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             
         self.update_font_and_plot()
 
+    def update_panel_font(self):
+        """更新左侧配置面板字号与字体类型"""
+        font_fam = self.panel_font_family.get() if hasattr(self, 'panel_font_family') and self.panel_font_family.get() else 'Microsoft YaHei'
+        font_sz = self.panel_font_size.get() if hasattr(self, 'panel_font_size') and self.panel_font_size.get() else '13'
+        try:
+            font_sz_int = int(font_sz)
+        except ValueError:
+            font_sz_int = 13
+        
+        style = f"""
+            QWidget#controlWidget, QWidget#controlWidget QLabel, QWidget#controlWidget QLineEdit, 
+            QWidget#controlWidget QComboBox, QWidget#controlWidget QCheckBox, QWidget#controlWidget QRadioButton, 
+            QWidget#controlWidget QPushButton, QWidget#controlWidget QGroupBox, QWidget#controlWidget QListWidget {{
+                font-family: "{font_fam}", "Microsoft YaHei", sans-serif;
+                font-size: {font_sz_int}px;
+            }}
+            QWidget#controlWidget QGroupBox {{
+                font-weight: bold;
+                font-size: {font_sz_int + 1}px;
+            }}
+        """
+        if hasattr(self, 'control_widget') and self.control_widget:
+            self.control_widget.setStyleSheet(style)
+
+    def get_default_panel_width(self):
+        """默认面板宽度为 560px"""
+        return 560
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        cur_w = self.width()
+        last_w = getattr(self, '_last_win_width', cur_w)
+        if cur_w == last_w:
+            geom = self.frameGeometry()
+            self._last_frame_left = geom.left()
+            self._last_frame_right = geom.right()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self, '_is_syncing_splitter', False):
+            return
+        if self.isMaximized():
+            return
+        
+        old_sz = event.oldSize()
+        new_sz = event.size()
+        cur_geom = self.frameGeometry()
+        cur_left = cur_geom.left()
+        cur_right = cur_geom.right()
+
+        old_left = getattr(self, '_last_frame_left', cur_left)
+        old_right = getattr(self, '_last_frame_right', cur_right)
+
+        self._last_frame_left = cur_left
+        self._last_frame_right = cur_right
+        self._last_win_width = new_sz.width()
+
+        if old_sz.isValid() and old_sz.width() > 0:
+            dw = new_sz.width() - old_sz.width()
+            if dw != 0:
+                left_shift = abs(cur_left - old_left)
+                right_shift = abs(cur_right - old_right)
+
+                # 只有当【左外框在移动】且【右外框未动】时，才判定为拖动最左侧外框
+                is_left_drag = (left_shift >= 2 and right_shift <= 2)
+
+                if is_left_drag:
+                    # 拖动左外框：面板宽度应随之变化，画布宽度保持不变
+                    # setStretchFactor 对当前 resizeEvent 无效（Qt 已完成本帧布局），
+                    # 必须用 setSizes 手动校正。
+                    sizes = self.splitter.sizes()
+                    if sizes and len(sizes) >= 2:
+                        cur_c = sizes[1]  # 使用当前实际画布宽度
+                        new_p = max(200, sizes[0] + dw)
+                        self._is_syncing_splitter = True
+                        try:
+                            self.splitter.setSizes([new_p, cur_c])
+                        finally:
+                            self._is_syncing_splitter = False
+                        self._saved_panel_width = new_p
+                        self._saved_canvas_width = cur_c
+                else:
+                    # 拖动右外框：stretch factor (0,1) 原生将增量分配给画布，面板不变
+                    # 确保 stretch factor 正确（中间拖拽后可能被改变）
+                    self.splitter.setStretchFactor(0, 0)
+                    self.splitter.setStretchFactor(1, 1)
+                    sizes = self.splitter.sizes()
+                    if sizes and len(sizes) >= 2:
+                        self._saved_panel_width = sizes[0]
+                        self._saved_canvas_width = sizes[1]
+
+                # 同步显示
+                self._sync_size_display()
+
+    def _sync_size_display(self):
+        """同步面板/画布宽度显示到输入框"""
+        p = int(getattr(self, '_saved_panel_width', 560))
+        c = int(getattr(self, '_saved_canvas_width', 1000))
+        if hasattr(self, 'panel_width_var'):
+            self.panel_width_var.set(str(p))
+        if hasattr(self, 'canvas_width_var'):
+            self.canvas_width_var.set(str(c))
+        if hasattr(self, 'panel_width_entry') and self.panel_width_entry:
+            if self.panel_width_entry.text() != str(p):
+                self.panel_width_entry.setText(str(p))
+        if hasattr(self, 'canvas_width_entry') and self.canvas_width_entry:
+            if self.canvas_width_entry.text() != str(c):
+                self.canvas_width_entry.setText(str(c))
+
+    def on_splitter_moved(self, pos, index):
+        if getattr(self, '_is_syncing_splitter', False):
+            return
+        if hasattr(self, 'splitter') and self.splitter:
+            sizes = self.splitter.sizes()
+            if sizes and len(sizes) >= 2:
+                panel_w, canvas_w = sizes[0], sizes[1]
+                saved_p = getattr(self, '_saved_panel_width', 560)
+                if abs(panel_w - saved_p) >= 2:
+                    self._saved_panel_width = panel_w
+                    self._saved_canvas_width = canvas_w
+                    # 中间分隔条拖拽结束后，恢复 stretch factor (0,1)
+                    # 保证后续拖动右外框时，增量全部分配给画布
+                    self.splitter.setStretchFactor(0, 0)
+                    self.splitter.setStretchFactor(1, 1)
+                    self._sync_size_display()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            if hasattr(self, 'splitter') and self.splitter:
+                self._apply_proportional_splitter_sizes()
+
+    def _apply_proportional_splitter_sizes(self):
+        """窗口最大化或状态改变时：按当前面板与画布的比值，结合当前屏幕/窗口尺寸重新分配宽度"""
+        if not hasattr(self, 'splitter') or not self.splitter:
+            return
+            
+        cur_p = int(getattr(self, '_saved_panel_width', 560))
+        cur_c = int(getattr(self, '_saved_canvas_width', 1000))
+        
+        self._is_syncing_splitter = True
+        try:
+            if self.isMaximized():
+                from PySide6.QtWidgets import QApplication
+                screen_geom = QApplication.primaryScreen().availableGeometry()
+                avail_w = max(1000, screen_geom.width() - 40)
+                total_saved = max(1, cur_p + cur_c)
+                ratio = cur_p / total_saved
+                
+                new_p = int(avail_w * ratio)
+                new_c = avail_w - new_p
+            else:
+                new_p = cur_p
+                new_c = cur_c
+
+            self.splitter.setSizes([new_p, new_c])
+            self.splitter.setStretchFactor(0, 0)
+            self.splitter.setStretchFactor(1, 1)
+
+            if hasattr(self, 'panel_width_var'):
+                self.panel_width_var.set(str(new_p))
+            if hasattr(self, 'canvas_width_var'):
+                self.canvas_width_var.set(str(new_c))
+        finally:
+            self._is_syncing_splitter = False
+
+        if hasattr(self, 'on_window_resize'):
+            self.on_window_resize()
+
+    def on_splitter_moved(self, pos, index):
+        if hasattr(self, 'splitter') and self.splitter:
+            sizes = self.splitter.sizes()
+            if sizes and len(sizes) >= 2:
+                panel_w, canvas_w = sizes[0], sizes[1]
+                saved_p = getattr(self, '_saved_panel_width', 560)
+                if abs(panel_w - saved_p) >= 3 and not getattr(self, '_is_syncing_splitter', False):
+                    self._saved_panel_width = panel_w
+                    self._saved_canvas_width = canvas_w
+                    self._is_syncing_splitter = True
+                    try:
+                        self.splitter.setStretchFactor(0, 0)
+                        self.splitter.setStretchFactor(1, 1)
+                        if hasattr(self, 'panel_width_var'):
+                            self.panel_width_var.set(str(panel_w))
+                        if hasattr(self, 'canvas_width_var'):
+                            self.canvas_width_var.set(str(canvas_w))
+                        if hasattr(self, 'panel_width_entry') and self.panel_width_entry:
+                            self.panel_width_entry.setText(str(panel_w))
+                        if hasattr(self, 'canvas_width_entry') and self.canvas_width_entry:
+                            self.canvas_width_entry.setText(str(canvas_w))
+                    finally:
+                        self._is_syncing_splitter = False
+
+    def on_step_filter_changed(self):
+        """工步筛选改变：更新X轴下拉列，并立刻重新绘制当前视图"""
+        if hasattr(self, 'step_filter_combo') and self.step_filter_combo:
+            self.step_filter.set(self.step_filter_combo.currentText())
+        self.update_file_type()
+        if self.file_type.get() == "battery" and self.cycle_compare_var.get():
+            step_val = self.step_filter.get()
+            if step_val == "全部":
+                self.compare_x_var.set("循环时间（计算）")
+            # 如果 step_val != "全部"，100% 保留用户在 compare_x_var 中自主选择的列（例如 "容量（计算）"），绝不清空或重置为循环时间！
+        self.update_plot()
+
+    def on_cycle_filter_changed(self):
+        """循环筛选改变：立刻重绘当前视图"""
+        if hasattr(self, 'cycle_filter_combo') and self.cycle_filter_combo:
+            self.cycle_filter.set(self.cycle_filter_combo.currentText())
+        self.update_plot()
+
+    def save_advanced_settings(self):
+        """点击高级设置面板中的【保存设置】按钮：将高级设置参数写入 settings.json 持久化保存"""
+        try:
+            p_val = int(self.panel_width_var.get())
+            if p_val >= 200:
+                self._saved_panel_width = p_val
+        except ValueError:
+            pass
+
+        try:
+            c_val = int(self.canvas_width_var.get())
+            if c_val >= 200:
+                self._saved_canvas_width = c_val
+        except ValueError:
+            pass
+
+        self.on_panel_width_entry_changed()
+        self.on_canvas_width_entry_changed()
+
+        if hasattr(self, 'save_settings'):
+            self.save_settings()
+        self.update_status("高级设置已保存成功")
+
+    def on_panel_width_entry_changed(self):
+        """修改【面板宽度】输入框：保持画布宽度不变，调整主窗口总宽度以匹配新面板宽度"""
+        if getattr(self, '_is_syncing_splitter', False):
+            return
+        try:
+            new_panel_w = int(self.panel_width_var.get())
+            if new_panel_w >= 200 and hasattr(self, 'splitter') and self.splitter:
+                try:
+                    cur_c = int(self.canvas_width_var.get())
+                except Exception:
+                    cur_c = 1000
+                
+                self._saved_panel_width = new_panel_w
+                self._saved_canvas_width = cur_c
+
+                self._is_syncing_splitter = True
+                try:
+                    if not self.isMaximized():
+                        self.resize(new_panel_w + cur_c, self.height())
+                    self.splitter.setSizes([new_panel_w, cur_c])
+                    self.splitter.setStretchFactor(0, 0)
+                    self.splitter.setStretchFactor(1, 1)
+                finally:
+                    self._is_syncing_splitter = False
+
+                if hasattr(self, 'on_window_resize'):
+                    self.on_window_resize()
+        except ValueError:
+            pass
+
+    def on_canvas_width_entry_changed(self):
+        """修改【画布宽度】输入框：保持面板宽度不变，调整主窗口总宽度以匹配新画布宽度"""
+        if getattr(self, '_is_syncing_splitter', False):
+            return
+        try:
+            new_canvas_w = int(self.canvas_width_var.get())
+            if new_canvas_w >= 200 and hasattr(self, 'splitter') and self.splitter:
+                try:
+                    cur_p = int(self.panel_width_var.get())
+                except Exception:
+                    cur_p = 560
+
+                self._saved_panel_width = cur_p
+                self._saved_canvas_width = new_canvas_w
+
+                self._is_syncing_splitter = True
+                try:
+                    if not self.isMaximized():
+                        self.resize(cur_p + new_canvas_w, self.height())
+                    self.splitter.setSizes([cur_p, new_canvas_w])
+                    self.splitter.setStretchFactor(0, 0)
+                    self.splitter.setStretchFactor(1, 1)
+                finally:
+                    self._is_syncing_splitter = False
+
+                if hasattr(self, 'on_window_resize'):
+                    self.on_window_resize()
+        except ValueError:
+            pass
+
+    def apply_advanced_settings(self):
+        """点击高级配置中的应用按钮：立即应用高级参数设置"""
+        self.on_panel_width_entry_changed()
+        self.on_canvas_width_entry_changed()
+        if hasattr(self, 'apply_canvas_background'):
+            self.apply_canvas_background()
+        self.update_plot()
+    def reset_plot_config(self):
+        """重置图表与图例配置参数"""
+        self.font_family.set("Microsoft YaHei")
+        self.font_size.set("18")
+        self.legend_font_size.set("18")
+        self.legend_cols.set("3")
+        self.frame_width.set("1.5")
+        self.line_width.set("1.5")
+        self.legend_visible.set(True)
+        self.legend_y.set("1.02")
+        self.legend_x_positions_str.set("0, 0.3, 0.7")
+        self.update_plot()
+
     def reset_advanced_settings(self):
         self.adv_left_margin_mult.set("4.5")
         self.adv_left_margin_min_px.set("80")
@@ -1556,7 +2105,54 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.adv_y1_margin_min_px.set("20")
         self.adv_y1_max_right_pct.set("0.97")
         
+        self.panel_font_family.set("Microsoft YaHei")
+        self.panel_font_size.set("13")
+        self.canvas_bg_var.set("默认(白色)")
+        
+        def_panel_w = 560
+        def_canvas_w = 1000
+        self._saved_panel_width = def_panel_w
+        self._saved_canvas_width = def_canvas_w
+        
+        self.panel_width_var.set(str(def_panel_w))
+        self.canvas_width_var.set(str(def_canvas_w))
+        if hasattr(self, 'panel_width_entry') and self.panel_width_entry:
+            self.panel_width_entry.setText(str(def_panel_w))
+        if hasattr(self, 'canvas_width_entry') and self.canvas_width_entry:
+            self.canvas_width_entry.setText(str(def_canvas_w))
+            
+        self._is_syncing_splitter = True
+        try:
+            self.resize(def_panel_w + def_canvas_w, self.height())
+            if hasattr(self, 'splitter') and self.splitter:
+                self.splitter.setSizes([def_panel_w, def_canvas_w])
+        finally:
+            self._is_syncing_splitter = False
+                
+        self.update_panel_font()
+        self.apply_canvas_background()
         self.update_plot()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, '_has_shown_once', False):
+            self._has_shown_once = True
+            def_p = int(getattr(self, '_saved_panel_width', 560))
+            def_c = int(getattr(self, '_saved_canvas_width', 1000))
+            self._is_syncing_splitter = True
+            try:
+                if hasattr(self, 'splitter') and self.splitter:
+                    self.splitter.setSizes([def_p, def_c])
+                if hasattr(self, 'panel_width_var'):
+                    self.panel_width_var.set(str(def_p))
+                if hasattr(self, 'canvas_width_var'):
+                    self.canvas_width_var.set(str(def_c))
+                if hasattr(self, 'panel_width_entry') and self.panel_width_entry:
+                    self.panel_width_entry.setText(str(def_p))
+                if hasattr(self, 'canvas_width_entry') and self.canvas_width_entry:
+                    self.canvas_width_entry.setText(str(def_c))
+            finally:
+                self._is_syncing_splitter = False
 
     def closeEvent(self, event):
         """窗口关闭时的清理工作"""
@@ -1570,7 +2166,3 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             print(f"关闭程序时出错: {str(e)}")
             event.accept()
             os._exit(1)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.on_window_resize()

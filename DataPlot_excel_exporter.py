@@ -299,12 +299,10 @@ class ExcelExporterMixin:
                     if step_val != "全部" and step_val != "":
                         df_to_plot = self.compute_step_time(df_to_plot, cycle_col_name, step_col_name, self.time_col.get())
                         try:
-                            df_to_plot = df_to_plot[df_to_plot[step_col_name] == step_val]
-                        except Exception:
-                            try:
-                                df_to_plot = df_to_plot[df_to_plot[step_col_name].astype(str) == str(step_val)]
-                            except Exception:
-                                pass
+                            df_to_plot = df_to_plot[df_to_plot[step_col_name].astype(str) == str(step_val)]
+                        except Exception as e:
+                            if hasattr(self, 'logger') and self.logger:
+                                self.logger.error(f"工步导出筛选异常: {str(e)}")
             
             if df_to_plot.empty:
                 QMessageBox.warning(self, "警告", "筛选后的绘图数据为空，无法保存！")

@@ -1,6 +1,6 @@
 # 排除所有子文件夹 (Ignore all directories)
-/*/
-!/TestData/
+# /*/
+# !/TestData/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -13,7 +13,8 @@ __pycache__/
 # Distribution / packaging (PyInstaller, setuptools, etc.)
 build/
 dist/
-# TestData/
+TestData/
+DataPlot/
 *.egg-info/
 .eggs/
 *.spec

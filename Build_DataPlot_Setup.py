@@ -64,6 +64,16 @@ def main():
     # 3. 编译制作安装包
     if iscc_path:
         print(f"==> 成功找到 Inno Setup 编译器: {iscc_path}")
+        setup_exe = os.path.join("installer_output", "DataPlot_Setup.exe")
+        if os.path.exists(setup_exe):
+            try:
+                os.remove(setup_exe)
+            except Exception:
+                subprocess.run("taskkill /F /IM DataPlot_Setup.exe /T", shell=True, capture_output=True)
+                try:
+                    os.remove(setup_exe)
+                except Exception:
+                    pass
         build_setup_cmd = f'"{iscc_path}" setup.iss'
         if run_cmd(build_setup_cmd, "编译 Inno Setup 安装包"):
             print("\n==================================================")

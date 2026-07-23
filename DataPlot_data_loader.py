@@ -283,8 +283,6 @@ class DataLoaderMixin:
                         col_lower = str(col).lower()
                         if cycle_default is None and any(x in col_lower for x in ['循环序号', '循环号', '循环', 'cycle']):
                             cycle_default = col
-                        if step_default is None and any(x in col_lower for x in ['工步状态', '工步', '工作状态', 'step', 'state', 'status']):
-                            step_default = col
                         if time_default is None and any(x in col_lower for x in ['时间', 'time']):
                             if not col_lower.endswith('_时间差(s)'):
                                 time_default = col
@@ -292,6 +290,16 @@ class DataLoaderMixin:
                             voltage_default = col
                         if current_default is None and (any(x in col_lower for x in ['电流', 'current', 'curr', 'i(a)', 'i(ma)']) or col_lower in ['i']):
                             current_default = col
+
+                    # Order of priority keywords for step_default auto-matching
+                    step_priority_keywords = ['工作模式', '工步状态', '工作状态', '工步类型', '工步名称', 'mode', 'state', 'status', 'phase', 'stage', '工步号', '工步', '过程号', '过程', 'step']
+                    for kw in step_priority_keywords:
+                        if step_default:
+                            break
+                        for col in df.columns:
+                            if kw in str(col).lower():
+                                step_default = col
+                                break
 
                     if not cycle_default and len(df.columns) > 0:
                         cycle_default = df.columns[0]
@@ -309,25 +317,7 @@ class DataLoaderMixin:
                     self.msg_queue.put({'type': 'status', 'message': "正在转换默认时间列并计算时间差(s)..."})
                     
                     if time_default and time_default in df.columns:
-                        col = time_default
-                        new_col_name = f"{col}_时间差(s)"
-                        if ptypes.is_datetime64_any_dtype(df[col]):
-                            first_valid = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
-                            if first_valid is not None:
-                                df[new_col_name] = (df[col] - first_valid).dt.total_seconds()
-                        elif df[col].dtype == 'object' or ptypes.is_string_dtype(df[col]):
-                            non_nulls = df[col].dropna()
-                            if not non_nulls.empty:
-                                try:
-                                    with warnings.catch_warnings():
-                                        warnings.filterwarnings("ignore", category=UserWarning, message=".*Could not infer format.*")
-                                        pd.to_datetime(non_nulls.head(10), errors='raise')
-                                        times = pd.to_datetime(df[col], errors='coerce')
-                                    first_valid = times.dropna().iloc[0] if not times.dropna().empty else None
-                                    if first_valid is not None:
-                                        df[new_col_name] = (times - first_valid).dt.total_seconds()
-                                except Exception:
-                                    pass
+                        df = self.recompute_all_time_diffs(df, time_default, cycle_default, step_default)
 
                     self.msg_queue.put({'type': 'status', 'message': "正在生成工步 and 循环筛选项..."})
                     cycles = ['全部']
@@ -520,34 +510,10 @@ class DataLoaderMixin:
 
     def _bg_calc_time_diff(self, time_col_name, new_col_name):
         try:
-            import pandas.api.types as ptypes
-            col_data = self.result_df[time_col_name]
+            cycle_col_name = self.cycle_col.get() if hasattr(self, 'cycle_col') else None
+            step_col_name = self.step_col.get() if hasattr(self, 'step_col') else None
             
-            numeric_col = pd.to_numeric(col_data, errors='coerce')
-            non_null_count = col_data.dropna().shape[0]
-            
-            if non_null_count > 0 and numeric_col.notna().sum() >= 0.95 * non_null_count:
-                non_nulls = numeric_col.dropna()
-                first_valid = non_nulls.iloc[0] if not non_nulls.empty else None
-                if first_valid is not None:
-                    self.result_df[new_col_name] = numeric_col - first_valid
-            elif ptypes.is_datetime64_any_dtype(col_data):
-                non_nulls = col_data.dropna()
-                first_valid = non_nulls.iloc[0] if not non_nulls.empty else None
-                if first_valid is not None:
-                    self.result_df[new_col_name] = (col_data - first_valid).dt.total_seconds()
-            else:
-                non_nulls = col_data.dropna()
-                if not non_nulls.empty:
-                    try:
-                        pd.to_datetime(non_nulls.head(10), errors='raise')
-                        times = pd.to_datetime(col_data, errors='coerce')
-                        valid_times = times.dropna()
-                        first_valid = valid_times.iloc[0] if not valid_times.empty else None
-                        if first_valid is not None:
-                            self.result_df[new_col_name] = (times - first_valid).dt.total_seconds()
-                    except Exception:
-                        pass
+            self.result_df = self.recompute_all_time_diffs(self.result_df, time_col_name, cycle_col_name, step_col_name)
                         
             self.msg_queue.put({
                 'type': 'time_diff_done',
@@ -702,13 +668,13 @@ class DataLoaderMixin:
                 daemon=True
             ).start()
         except Exception as e:
-            QMessageBox.showerror("错误", f"启动保存线程失败: {str(e)}")
+            QMessageBox.critical(self, "错误", f"启动保存线程失败: {str(e)}")
             self.set_buttons_state(True)
 
     def _bg_save_processed_xlsx(self, save_path):
         try:
-            # 使用 xlsxwriter 引擎保存 DataFrame 到 Excel 格式
-            with pd.ExcelWriter(save_path, engine='xlsxwriter') as writer:
+            # 使用 xlsxwriter 引擎保存 DataFrame 到 Excel 格式，并启用 ZIP64 支持防止超大文件报错
+            with pd.ExcelWriter(save_path, engine='xlsxwriter', engine_kwargs={'options': {'use_zip64': True}}) as writer:
                 self.result_df.to_excel(writer, sheet_name='Sheet1', index=False)
             
             self.msg_queue.put({

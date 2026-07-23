@@ -60,7 +60,6 @@ cmd = [
     '--exclude-module=numpy.tests',
     '--exclude-module=pandas.tests',
     '--exclude-module=unittest',
-    '--exclude-module=shiboken6',
     '--exclude-module=matplotlib.backends.backend_tkagg',
     '--exclude-module=matplotlib.backends.backend_qt5agg',
     '--exclude-module=matplotlib.backends.backend_qt5',

@@ -2,6 +2,7 @@ import time
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
 from PySide6.QtWidgets import QMessageBox
 from PySide6.QtCore import QTimer
 
@@ -55,10 +56,38 @@ class PlotEngineMixin:
         self._update_timer.timeout.connect(self.update_plot)
         self._update_timer.start(300)
 
+    def setup_mpl_font(self, font_family):
+        """设置Matplotlib中英文混合解析字体，彻底消除字符缺省（□□）警告与乱码"""
+        chinese_fallbacks = ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'Arial Unicode MS', 'DejaVu Sans']
+        sans_list = [font_family] + [f for f in chinese_fallbacks if f != font_family]
+        seen = set()
+        ordered_sans = [x for x in sans_list if not (x in seen or seen.add(x))]
+        plt.rcParams['font.sans-serif'] = ordered_sans
+        plt.rcParams['axes.unicode_minus'] = False
+        return ordered_sans
+
     def on_cycle_compare_toggle(self):
         self.update_file_type()
+        is_compare = (self.file_type.get() == "battery" and self.cycle_compare_var.get())
+        was_compare = getattr(self, '_in_cycle_compare_mode', False)
+
+        if is_compare and not was_compare:
+            # 刚从普通模式进入循环对比模式：保存之前的 X 轴列，并将对比 X 轴默认设为 "循环时间（计算）"
+            self._prev_regular_x_col = self.x_axis.get() if hasattr(self, 'x_axis') else ""
+            self.compare_x_var.set("循环时间（计算）")
+            self._in_cycle_compare_mode = True
+        elif not is_compare and was_compare:
+            # 刚从循环对比模式退出到普通模式：恢复进入循环对比前原本的 X 轴列
+            prev_x = getattr(self, '_prev_regular_x_col', '')
+            if prev_x:
+                self.x_axis.set(prev_x)
+                if hasattr(self, 'x_combo') and self.x_combo:
+                    self.x_combo.set(prev_x)
+            self._in_cycle_compare_mode = False
+
         self.update_listboxes()
-        self.delayed_update()
+
+        self.update_plot(force=True)
 
     def set_compare_type(self, compare_type):
         self.current_compare_type.set(compare_type)
@@ -70,22 +99,65 @@ class PlotEngineMixin:
         self._is_syncing_x = True
         try:
             val = self.compare_x_var.get()
-            if self.x_axis.get() != val:
-                self.x_axis.set(val)
+            if self.file_type.get() == "battery" and self.cycle_compare_var.get():
+                if hasattr(self, 'x_axis') and self.x_axis.get() != val:
+                    self.x_axis.set(val)
+                if hasattr(self, 'x_combo') and self.x_combo:
+                    self.x_combo.set(val)
+
+            val_lower = str(val).lower()
+            if hasattr(self, 'x_title'):
+                if hasattr(self.x_title, 'setText'):
+                    if '容量' in val or 'capacity' in val_lower:
+                        self.x_title.setText("Capacity / Ah")
+                    elif '工步时间' in val:
+                        self.x_title.setText("Step Time / s")
+                    elif '时间' in val or 'time' in val_lower:
+                        self.x_title.setText("Time / s")
+                elif hasattr(self.x_title, 'set'):
+                    if '容量' in val or 'capacity' in val_lower:
+                        self.x_title.set("Capacity / Ah")
+                    elif '工步时间' in val:
+                        self.x_title.set("Step Time / s")
+                    elif '时间' in val or 'time' in val_lower:
+                        self.x_title.set("Time / s")
         finally:
             self._is_syncing_x = False
+
+        self.delayed_update()
 
     def sync_regular_x(self, *args):
         if getattr(self, '_is_syncing_x', False):
             return
-        if self.file_type.get() == "battery" and self.cycle_compare_var.get():
-            self._is_syncing_x = True
-            try:
-                val = self.x_axis.get()
-                if self.compare_x_var.get() != val:
+        self._is_syncing_x = True
+        try:
+            val = self.x_axis.get()
+            if self.file_type.get() == "battery" and self.cycle_compare_var.get():
+                if hasattr(self, 'compare_x_var') and self.compare_x_var.get() != val:
                     self.compare_x_var.set(val)
-            finally:
-                self._is_syncing_x = False
+                if hasattr(self, 'compare_x_combo') and self.compare_x_combo:
+                    self.compare_x_combo.set(val)
+
+            val_lower = str(val).lower()
+            if hasattr(self, 'x_title'):
+                if hasattr(self.x_title, 'setText'):
+                    if '容量' in val or 'capacity' in val_lower:
+                        self.x_title.setText("Capacity / Ah")
+                    elif '工步时间' in val:
+                        self.x_title.setText("Step Time / s")
+                    elif '时间' in val or 'time' in val_lower:
+                        self.x_title.setText("Time / s")
+                elif hasattr(self.x_title, 'set'):
+                    if '容量' in val or 'capacity' in val_lower:
+                        self.x_title.set("Capacity / Ah")
+                    elif '工步时间' in val:
+                        self.x_title.set("Step Time / s")
+                    elif '时间' in val or 'time' in val_lower:
+                        self.x_title.set("Time / s")
+        finally:
+            self._is_syncing_x = False
+
+        self.delayed_update()
 
     def plot_cycle_compare(self, plot_type='regular'):
         try:
@@ -149,47 +221,65 @@ class PlotEngineMixin:
             except ImportError:
                 has_scipy = False
 
+            self.canvas.setUpdatesEnabled(False)
             self.fig.clf()
-            w_px = self.canvas.width()
-            h_px = self.canvas.height()
+            w_px, h_px = self.get_canvas_physical_size()
             if w_px > 1 and h_px > 1:
                 self.fig.set_size_inches(w_px / self.fig.dpi, h_px / self.fig.dpi, forward=False)
             
             self.ax = self.fig.add_subplot(111)
+            self.apply_canvas_background()
 
             font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
             font_family = self.font_family.get()
-            plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
-            plt.rcParams['axes.unicode_minus'] = False
+            self.setup_mpl_font(font_family)
+
+            bg_choice = self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else "默认(白色)"
+            current_text_color = '#ffffff' if "黑" in bg_choice else ('#212529' if "灰" in bg_choice else '#000000')
 
             def set_axis_style(ax):
                 ax.tick_params(axis='both', direction='in', width=float(self.frame_width.get()), length=6, 
-                              labelsize=font_size, color='black')
+                              labelsize=font_size, colors=current_text_color)
                 for spine in ax.spines.values():
                     spine.set_linewidth(float(self.frame_width.get()))
-                    spine.set_color('black')
+                    spine.set_color(current_text_color)
 
             all_lines = []
             all_labels = []
             all_y_plots = []
 
-            y1_data = self.y_selections[0]
-            y2_data = self.y_selections[1]
-            y3_data = self.y_selections[2]
+            y1_data = self.y_selections[0] if len(self.y_selections) > 0 else []
+            y2_data = self.y_selections[1] if len(self.y_selections) > 1 else []
+            y3_data = self.y_selections[2] if len(self.y_selections) > 2 else []
+
+            if not any([y1_data, y2_data, y3_data]):
+                self.ax.clear()
+                self.ax.set_xticks([])
+                self.ax.set_yticks([])
+                self.ax.set_visible(True)
+                self.canvas.draw_idle()
+                self.update_status("未选择Y轴绘图列。")
+                return
 
             if plot_type == 'regular':
-                if not any([y1_data, y2_data, y3_data]):
-                    self.update_status("未选择Y轴绘图列。")
-                    return
                 set_axis_style(self.ax)
                 ax2 = None
                 ax3 = None
+                self.ax2_ref = None
+                self.ax3_ref = None
+                if y1_data:
+                    pass
+                else:
+                    self.ax.set_yticks([])
+                    self.ax.set_ylabel('')
                 if y2_data:
                     ax2 = self.ax.twinx()
+                    self.ax2_ref = ax2
                     ax2.spines['right'].set_position(('outward', 0))
                     set_axis_style(ax2)
                 if y3_data:
                     ax3 = self.ax.twinx()
+                    self.ax3_ref = ax3
                     ax3.spines['right'].set_position(('outward', 70))
                     set_axis_style(ax3)
             else:
@@ -208,18 +298,30 @@ class PlotEngineMixin:
                     df_c[current_col_name] = pd.to_numeric(df_c[current_col_name], errors='coerce') * c_scale
                 if step_val != "全部" and step_val != "":
                     df_c = self.compute_step_time(df_c, cycle_col_name, step_col_name, time_col_name)
-                    df_c = df_c[df_c[step_col_name].astype(str) == str(step_val)]
+                    exact_mask = (df_c[step_col_name].astype(str) == str(step_val))
+                    if exact_mask.any():
+                        df_c = df_c[exact_mask]
+                    else:
+                        fuzzy_mask = df_c[step_col_name].astype(str).str.contains(str(step_val), case=False, na=False)
+                        if fuzzy_mask.any():
+                            df_c = df_c[fuzzy_mask]
+                        else:
+                            df_c = df_c[exact_mask]
 
                 if df_c.empty:
                     continue
 
                 df_c = df_c.sort_values(by=time_col_name)
 
-                time_diff_col = f"{time_col_name}_时间差(s)"
-                if time_diff_col in df_c.columns:
-                    t_vals = pd.to_numeric(df_c[time_diff_col], errors='coerce').values
+                t_diff_series = self.calculate_time_diff_series(df_c, time_col_name)
+                if t_diff_series is not None:
+                    t_vals = t_diff_series.values
                 else:
-                    t_vals = pd.to_numeric(df_c[time_col_name], errors='coerce').values
+                    time_diff_col = f"{time_col_name}_时间差(s)"
+                    if time_diff_col in df_c.columns:
+                        t_vals = pd.to_numeric(df_c[time_diff_col], errors='coerce').values
+                    else:
+                        t_vals = pd.to_numeric(df_c[time_col_name], errors='coerce').values
                 
                 valid_t = ~np.isnan(t_vals)
                 if not np.any(valid_t):
@@ -254,11 +356,11 @@ class PlotEngineMixin:
                         step_curr = curr_vals[mask]
                         step_dt = dt[mask]
                         
-                        step_dq = (step_curr * multiplier * step_dt) / 3600.0
+                        step_dq = np.abs(step_curr * step_dt) / 3600.0
                         step_cap = np.cumsum(step_dq)
                         cap_vals[mask] = step_cap
                 else:
-                    dq = (curr_vals * multiplier * dt) / 3600.0
+                    dq = np.abs(curr_vals * dt) / 3600.0
                     cap_vals = np.cumsum(dq)
 
                 if plot_type in ['dqdv', 'dvdq']:
@@ -329,6 +431,13 @@ class PlotEngineMixin:
                     elif x_choice in ["循环时间", "循环时间（计算）"]:
                         x_plot = t_valid
                         x_label = "Time / s"
+                    elif x_choice in ["工步时间", "工步时间（计算）", "工步时间(s)"]:
+                        step_t_df = self.compute_step_time(df_c, cycle_col_name, step_col_name, time_col_name)
+                        if '工步时间(s)' in step_t_df.columns:
+                            x_plot = pd.to_numeric(step_t_df['工步时间(s)'], errors='coerce').values[valid]
+                        else:
+                            x_plot = t_valid
+                        x_label = "Step Time / s"
                     elif x_choice == voltage_col_name:
                         x_plot = u_valid
                         x_label = f"{voltage_col_name} / V"
@@ -358,13 +467,24 @@ class PlotEngineMixin:
                     df_c_plot = df_c.copy()
                     df_c_plot['Capacity'] = cap_vals
                     df_c_plot['循环时间（计算）'] = t_rel
+                    df_c_plot['循环时间(s)'] = t_rel
                     df_c_plot['容量（计算）'] = cap_vals
+
+                    step_t_df = self.compute_step_time(df_c_plot, cycle_col_name, step_col_name, time_col_name)
+                    if '工步时间(s)' in step_t_df.columns:
+                        df_c_plot['工步时间（计算）'] = step_t_df['工步时间(s)']
+                        df_c_plot['工步时间(s)'] = step_t_df['工步时间(s)']
+                        df_c_plot['工步时间'] = step_t_df['工步时间(s)']
+                    else:
+                        df_c_plot['工步时间（计算）'] = t_rel
 
                     x_col = self.compare_x_var.get()
                     if x_col in ["容量", "容量（计算）"]:
                         x_col = "容量（计算）"
                     elif x_col in ["循环时间", "循环时间（计算）"]:
                         x_col = "循环时间（计算）"
+                    elif x_col in ["工步时间", "工步时间（计算）", "工步时间(s)"]:
+                        x_col = "工步时间（计算）"
 
                     if not x_col or x_col not in df_c_plot.columns:
                         self.update_status(f"错误: 未找到X轴 '{x_col}'。")
@@ -460,7 +580,18 @@ class PlotEngineMixin:
                     elif ymax_val is not None:
                         self.ax.set_ylim(top=ymax_val)
             else:
-                self.ax.set_xlabel(self.x_title.get(), fontsize=font_size, fontfamily=font_family, color='black')
+                x_col_name = self.compare_x_var.get()
+                x_col_lower = str(x_col_name).lower()
+                if '容量' in x_col_name or 'capacity' in x_col_lower:
+                    default_x_label = "Capacity / Ah"
+                elif '工步时间' in x_col_name:
+                    default_x_label = "Step Time / s"
+                elif '时间' in x_col_name or 'time' in x_col_lower:
+                    default_x_label = "Time / s"
+                else:
+                    default_x_label = x_col_name
+
+                self.ax.set_xlabel(default_x_label, fontsize=font_size, fontfamily=font_family, color='black')
                 
                 # Check user title for comparative regular plot (which is now called "循环Y轴")
                 user_y_title = self.dqdv_title_var.get().strip()
@@ -539,27 +670,36 @@ class PlotEngineMixin:
                 except ValueError:
                     legend_font_size = 18
 
-                if plot_type in ['dqdv', 'dvdq']:
-                    self.ax.legend(all_lines, all_labels, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
-                else:
-                    y1_end = len(y1_data) * len(cycles) if y1_data else 0
-                    y2_end = y1_end + (len(y2_data) * len(cycles) if y2_data else 0)
-                    y1_lines = all_lines[:y1_end]
-                    y2_lines = all_lines[y1_end:y2_end]
-                    y3_lines = all_lines[y2_end:]
-                    y1_labels_s = all_labels[:y1_end]
-                    y2_labels_s = all_labels[y1_end:y2_end]
-                    y3_labels_s = all_labels[y2_end:]
+                leg_prop = FontProperties(family=self.setup_mpl_font(font_family), size=legend_font_size)
 
-                    if y1_lines:
-                        leg1 = self.ax.legend(y1_lines, y1_labels_s, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
-                        self.ax.add_artist(leg1)
-                    if y2_lines and ax2:
-                        leg2 = ax2.legend(y2_lines, y2_labels_s, loc='upper left', bbox_to_anchor=(positions[1], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
-                        ax2.add_artist(leg2)
-                    if y3_lines and ax3:
-                        leg3 = ax3.legend(y3_lines, y3_labels_s, loc='upper left', bbox_to_anchor=(positions[2], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
-                        ax3.add_artist(leg3)
+                if plot_type in ['dqdv', 'dvdq']:
+                    all_lines = [l for l in self.ax.get_lines() if l.get_visible()]
+                    all_labels = [l.get_label() for l in all_lines]
+                    if all_lines:
+                        self.ax.legend(all_lines, all_labels, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
+                else:
+                    ax1 = getattr(self, 'ax', None)
+                    ax2_obj = getattr(self, 'ax2_ref', None)
+                    ax3_obj = getattr(self, 'ax3_ref', None)
+
+                    y1_lines = [l for l in ax1.get_lines() if l.get_visible()] if ax1 else []
+                    y1_labels_s = [l.get_label() for l in y1_lines]
+
+                    y2_lines = [l for l in ax2_obj.get_lines() if l.get_visible()] if ax2_obj else []
+                    y2_labels_s = [l.get_label() for l in y2_lines]
+
+                    y3_lines = [l for l in ax3_obj.get_lines() if l.get_visible()] if ax3_obj else []
+                    y3_labels_s = [l.get_label() for l in y3_lines]
+
+                    if y1_lines and ax1:
+                        leg1 = ax1.legend(y1_lines, y1_labels_s, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
+                        ax1.add_artist(leg1)
+                    if y2_lines and ax2_obj:
+                        leg2 = ax2_obj.legend(y2_lines, y2_labels_s, loc='upper left', bbox_to_anchor=(positions[1], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
+                        ax2_obj.add_artist(leg2)
+                    if y3_lines and ax3_obj:
+                        leg3 = ax3_obj.legend(y3_lines, y3_labels_s, loc='upper left', bbox_to_anchor=(positions[2], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
+                        ax3_obj.add_artist(leg3)
 
             right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
             self.fig.subplots_adjust(right=right_margin, left=left_margin, top=0.90, bottom=0.08)
@@ -584,9 +724,11 @@ class PlotEngineMixin:
                             self.ax.set_xlim(xmin_val, xmax_val)
             except Exception:
                 pass
+            self.canvas.setUpdatesEnabled(True)
             self.canvas.draw()
 
         except Exception as e:
+            self.canvas.setUpdatesEnabled(True)
             QMessageBox.critical(self, "错误", f"循环对比绘图失败: {str(e)}")
 
     def update_font_and_plot(self):
@@ -598,7 +740,8 @@ class PlotEngineMixin:
             plt.rcParams['axes.labelsize'] = font_size
             plt.rcParams['xtick.labelsize'] = font_size
             plt.rcParams['ytick.labelsize'] = font_size
-            plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
+            chinese_fallbacks = ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'Arial Unicode MS']
+            plt.rcParams['font.sans-serif'] = [font_family] + [f for f in chinese_fallbacks if f != font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
             plt.rcParams['axes.unicode_minus'] = False
             
             legend_font_size = self.safe_float_convert(self.legend_font_size.get(), 18.0)
@@ -623,16 +766,78 @@ class PlotEngineMixin:
         except Exception as e:
             print(f"更新字体失败: {str(e)}")
 
-    def update_plot(self):
+    def apply_canvas_background(self):
+        """根据选定的画布背景（默认(白色)、灰色、黑色）更新图表背景色及文字/刻度线颜色"""
+        try:
+            if not hasattr(self, 'fig') or not self.fig:
+                return
+            bg_choice = self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else "默认(白色)"
+            
+            if "黑" in bg_choice:
+                fig_bg = '#121212'
+                ax_bg = '#121212'
+                text_color = '#ffffff'
+            elif "灰" in bg_choice:
+                fig_bg = '#343a40'
+                ax_bg = '#343a40'
+                text_color = '#ffffff'
+            else:  # 默认(白色)
+                fig_bg = '#ffffff'
+                ax_bg = '#ffffff'
+                text_color = '#000000'
+                
+            self.fig.patch.set_facecolor(fig_bg)
+            
+            if hasattr(self, 'canvas') and self.canvas:
+                self.canvas.setStyleSheet(f"background-color: {fig_bg};")
+            
+            axes_list = list(self.fig.axes)
+            if not axes_list and hasattr(self, 'ax') and self.ax:
+                axes_list = [self.ax]
+
+            for idx, ax in enumerate(axes_list):
+                if idx == 0:
+                    ax.set_facecolor(ax_bg)
+                else:
+                    ax.set_facecolor('none')
+                
+                ax.tick_params(colors=text_color, which='both')
+                ax.xaxis.label.set_color(text_color)
+                ax.yaxis.label.set_color(text_color)
+                ax.title.set_color(text_color)
+                for spine in ax.spines.values():
+                    spine.set_color(text_color)
+                
+                leg = ax.get_legend()
+                if leg:
+                    leg.get_frame().set_facecolor(ax_bg)
+                    leg.get_frame().set_edgecolor(text_color)
+                    for text in leg.get_texts():
+                        text.set_color(text_color)
+
+            if hasattr(self, 'canvas') and self.canvas:
+                self.canvas.draw()
+                self.canvas.repaint()
+        except Exception as e:
+            print(f"设置画布背景颜色失败: {str(e)}")
+
+    def update_plot(self, force=False):
         """触发重新绘图"""
         current_time = time.time()
-        if current_time - self._last_plot_time < 0.1:
+        if not force and (current_time - self._last_plot_time < 0.05):
             return
         self._last_plot_time = current_time
-        if self.file_type.get() == "battery" and self.cycle_compare_var.get():
-            self.plot_cycle_compare(plot_type=self.current_compare_type.get())
-        else:
-            self.plot_data()
+        
+        self._is_plotting = True
+        try:
+            if self.file_type.get() == "battery" and self.cycle_compare_var.get():
+                self.plot_cycle_compare(plot_type=self.current_compare_type.get())
+            else:
+                self.plot_data()
+                
+            self.apply_canvas_background()
+        finally:
+            self._is_plotting = False
             
         # 保存当前设置
         if hasattr(self, 'save_settings'):
@@ -682,12 +887,18 @@ class PlotEngineMixin:
                     if step_val != "全部" and step_val != "":
                         df_to_plot = self.compute_step_time(df_to_plot, cycle_col_name, step_col_name, self.time_col.get())
                         try:
-                            df_to_plot = df_to_plot[df_to_plot[step_col_name] == step_val]
-                        except Exception:
-                            try:
-                                df_to_plot = df_to_plot[df_to_plot[step_col_name].astype(str) == str(step_val)]
-                            except Exception:
-                                pass
+                            exact_mask = (df_to_plot[step_col_name].astype(str) == str(step_val))
+                            if exact_mask.any():
+                                df_to_plot = df_to_plot[exact_mask]
+                            else:
+                                fuzzy_mask = df_to_plot[step_col_name].astype(str).str.contains(str(step_val), case=False, na=False)
+                                if fuzzy_mask.any():
+                                    df_to_plot = df_to_plot[fuzzy_mask]
+                                else:
+                                    df_to_plot = df_to_plot[exact_mask]
+                        except Exception as e:
+                            if hasattr(self, 'logger') and self.logger:
+                                self.logger.error(f"工步筛选异常: {str(e)}")
             
             if df_to_plot.empty:
                 self.ax.clear()
@@ -707,12 +918,16 @@ class PlotEngineMixin:
                 except Exception as e:
                     self.logger.error(f"数据降采样失败: {str(e)}")
                 
+            self.setup_mpl_font(self.font_family.get())
+            bg_choice = self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else "默认(白色)"
+            current_text_color = '#ffffff' if "黑" in bg_choice else ('#212529' if "灰" in bg_choice else '#000000')
+
             def set_axis_style(ax):
                 ax.tick_params(axis='both', direction='in', width=float(self.frame_width.get()), length=6, 
-                              labelsize=int(self.font_size.get()), color='black')
+                              labelsize=int(self.font_size.get()), colors=current_text_color)
                 for spine in ax.spines.values():
                     spine.set_linewidth(float(self.frame_width.get()))
-                    spine.set_color('black')
+                    spine.set_color(current_text_color)
                     
             y1_data = self.y_selections[0]
             y2_data = self.y_selections[1]
@@ -722,10 +937,9 @@ class PlotEngineMixin:
                 return
                 
             if clicked_axis == 0 or clicked_axis is None:
+                self.canvas.setUpdatesEnabled(False)
                 self.fig.clf()
-                
-                w_px = self.canvas.width()
-                h_px = self.canvas.height()
+                w_px, h_px = self.get_canvas_physical_size()
                 if w_px > 1 and h_px > 1:
                     self.fig.set_size_inches(w_px / self.fig.dpi, h_px / self.fig.dpi, forward=False)
                     
@@ -742,6 +956,17 @@ class PlotEngineMixin:
                     return
                 
             x_col = self.x_axis.get()
+            if x_col == '工步时间（计算）' and '工步时间（计算）' not in df_to_plot.columns:
+                if '工步时间差(s)' in df_to_plot.columns:
+                    x_col = '工步时间差(s)'
+                elif '工步时间' in df_to_plot.columns:
+                    x_col = '工步时间'
+            elif x_col == '循环时间（计算）' and '循环时间（计算）' not in df_to_plot.columns:
+                if '循环时间差(s)' in df_to_plot.columns:
+                    x_col = '循环时间差(s)'
+                elif '循环时间' in df_to_plot.columns:
+                    x_col = '循环时间'
+                    
             font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
             font_family = self.font_family.get()
             plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
@@ -779,9 +1004,17 @@ class PlotEngineMixin:
                         self.ax.set_ylim(ymin, ymax)
                 except Exception:
                     pass
+            else:
+                # Y1 无数据时，隐藏左侧 Y 轴的默认 0-1 刻度
+                self.ax.set_yticks([])
+                self.ax.set_ylabel('')
+                set_axis_style(self.ax)
                 
+            self.ax2_ref = None
+            self.ax3_ref = None
             if y2_data:
                 ax2 = self.ax.twinx()
+                self.ax2_ref = ax2
                 ax2.spines['right'].set_position(('outward', 0))
                 set_axis_style(ax2)
                 color_map = self.color_schemes_dict[self.color_schemes[1].get()]
@@ -810,6 +1043,7 @@ class PlotEngineMixin:
                 
             if y3_data:
                 ax3 = self.ax.twinx()
+                self.ax3_ref = ax3
                 ax3.spines['right'].set_position(('outward', 70))
                 set_axis_style(ax3)
                 color_map = self.color_schemes_dict[self.color_schemes[2].get()]
@@ -853,18 +1087,19 @@ class PlotEngineMixin:
                 except ValueError:
                     legend_font_size = 18
                 
+                leg_prop = FontProperties(family=self.setup_mpl_font(font_family), size=legend_font_size)
                 for ax in self.fig.axes:
                     if ax.get_legend() is not None:
                         ax.get_legend().remove()
                     
                 if y1_data:
-                    leg1 = self.ax.legend(y1_lines, y1_labels, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
+                    leg1 = self.ax.legend(y1_lines, y1_labels, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
                     self.ax.add_artist(leg1)
                 if y2_data:
-                    leg2 = self.ax.legend(y2_lines, y2_labels, loc='upper left', bbox_to_anchor=(positions[1], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
+                    leg2 = self.ax.legend(y2_lines, y2_labels, loc='upper left', bbox_to_anchor=(positions[1], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
                     self.ax.add_artist(leg2)
                 if y3_data:
-                    leg3 = self.ax.legend(y3_lines, y3_labels, loc='upper left', bbox_to_anchor=(positions[2], legend_y), ncol=legend_cols, frameon=False, fontsize=legend_font_size)
+                    leg3 = self.ax.legend(y3_lines, y3_labels, loc='upper left', bbox_to_anchor=(positions[2], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
                     self.ax.add_artist(leg3)
                     
             self.ax.set_xlabel(self.x_title.get(), fontsize=font_size, fontfamily=font_family, color='black')
@@ -902,46 +1137,58 @@ class PlotEngineMixin:
                                 self.ax.set_xlim(xmin_val, xmax_val)
             except Exception as e:
                 print(f"X-axis limits error: {e}")
+            self.canvas.setUpdatesEnabled(True)
             self.canvas.draw()
             
         except Exception as e:
+            self.canvas.setUpdatesEnabled(True)
             QMessageBox.critical(self, "错误", f"绘图失败: {str(e)}")
+
+    def get_canvas_physical_size(self):
+        """获取 canvas 在高 DPI 屏下的实际物理像素宽高 (w_px, h_px)"""
+        if not hasattr(self, 'canvas') or self.canvas is None:
+            return 0, 0
+        dpr = getattr(self.canvas, 'devicePixelRatioF', lambda: getattr(self.canvas, 'devicePixelRatio', lambda: 1.0)())()
+        w_px = int(self.canvas.width() * dpr)
+        h_px = int(self.canvas.height() * dpr)
+        return w_px, h_px
 
     def get_dynamic_margins(self, y1_data, y2_data, y3_data):
         """根据当前图纸的实际像素宽度和字体大小，动态计算并返回左右边距百分比"""
         try:
-            fig_width_px = self.canvas.width()
+            dpr = getattr(self.canvas, 'devicePixelRatioF', lambda: getattr(self.canvas, 'devicePixelRatio', lambda: 1.0)())()
+            fig_width_px = self.canvas.width() * dpr
             
             if fig_width_px <= 1:
                 fig_width_px = self.fig.get_figwidth() * self.fig.dpi
             if fig_width_px <= 1:
-                fig_width_px = 1200
+                fig_width_px = 1200 * dpr
                 
-            font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
+            font_size = int(self.safe_float_convert(self.font_size.get(), 18.0)) * dpr
             
             left_mult = float(self.safe_float_convert(self.adv_left_margin_mult.get(), 4.5))
-            left_min_px = float(self.safe_float_convert(self.adv_left_margin_min_px.get(), 80.0))
+            left_min_px = float(self.safe_float_convert(self.adv_left_margin_min_px.get(), 80.0)) * dpr
             left_min_pct = float(self.safe_float_convert(self.adv_left_margin_min_pct.get(), 0.08))
             
             left_margin_px = max(left_min_px, int(font_size * left_mult))
             
             if y3_data:
                 y3_mult = float(self.safe_float_convert(self.adv_y3_margin_mult.get(), 9.5))
-                y3_min_px = float(self.safe_float_convert(self.adv_y3_margin_min_px.get(), 170.0))
+                y3_min_px = float(self.safe_float_convert(self.adv_y3_margin_min_px.get(), 170.0)) * dpr
                 y3_max_right_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.83))
                 
                 right_margin_px = max(y3_min_px, int(font_size * y3_mult))
                 max_right_percent = y3_max_right_pct
             elif y2_data:
                 y2_mult = float(self.safe_float_convert(self.adv_y2_margin_mult.get(), 4.0))
-                y2_min_px = float(self.safe_float_convert(self.adv_y2_margin_min_px.get(), 75.0))
+                y2_min_px = float(self.safe_float_convert(self.adv_y2_margin_min_px.get(), 75.0)) * dpr
                 y2_max_right_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.93))
                 
                 right_margin_px = max(y2_min_px, int(font_size * y2_mult))
                 max_right_percent = y2_max_right_pct
             else:
                 y1_mult = float(self.safe_float_convert(self.adv_y1_margin_mult.get(), 1.5))
-                y1_min_px = float(self.safe_float_convert(self.adv_y1_margin_min_px.get(), 20.0))
+                y1_min_px = float(self.safe_float_convert(self.adv_y1_margin_min_px.get(), 20.0)) * dpr
                 y1_max_right_pct = float(self.safe_float_convert(self.adv_y1_max_right_pct.get(), 0.97))
                 
                 right_margin_px = max(y1_min_px, int(font_size * y1_mult))
@@ -964,8 +1211,7 @@ class PlotEngineMixin:
 
     def on_window_resize(self, event=None):
         if hasattr(self, 'fig') and hasattr(self, 'canvas'):
-            w_px = self.canvas.width()
-            h_px = self.canvas.height()
+            w_px, h_px = self.get_canvas_physical_size()
             if w_px > 1 and h_px > 1:
                 self.fig.set_size_inches(w_px / self.fig.dpi, h_px / self.fig.dpi, forward=False)
                 
@@ -1014,64 +1260,53 @@ class PlotEngineMixin:
                 y2_data = self.y_selections[1]
                 y3_data = self.y_selections[2]
                 
-                axes = [self.ax]
-                for axis in self.ax.figure.axes:
-                    if axis != self.ax:
-                        axes.append(axis)
-                
-                for ax in axes[1:]:
+                for ax in self.fig.axes:
                     if ax.get_legend() is not None:
                         ax.get_legend().remove()
-                
-                all_lines = []
-                all_labels = []
-                
-                for ax in axes:
-                    for line in ax.get_lines():
-                        if line.get_visible():
-                            all_lines.append(line)
-                            all_labels.append(line.get_label())
-                
-                y1_end = len(y1_data) if y1_data else 0
-                y2_end = y1_end + (len(y2_data) if y2_data else 0)
-                
-                y1_lines = all_lines[:y1_end] if y1_data else []
-                y2_lines = all_lines[y1_end:y2_end] if y2_data else []
-                y3_lines = all_lines[y2_end:] if y3_data else []
-                
-                y1_labels = all_labels[:y1_end] if y1_data else []
-                y2_labels = all_labels[y1_end:y2_end] if y2_data else []
-                y3_labels = all_labels[y2_end:] if y3_data else []
-                
+
+                ax1 = getattr(self, 'ax', None)
+                ax2 = getattr(self, 'ax2_ref', None)
+                ax3 = getattr(self, 'ax3_ref', None)
+
+                y1_lines = [l for l in ax1.get_lines() if l.get_visible()] if ax1 else []
+                y1_labels = [l.get_label() for l in y1_lines]
+
+                y2_lines = [l for l in ax2.get_lines() if l.get_visible()] if ax2 else []
+                y2_labels = [l.get_label() for l in y2_lines]
+
+                y3_lines = [l for l in ax3.get_lines() if l.get_visible()] if ax3 else []
+                y3_labels = [l.get_label() for l in y3_lines]
+
                 positions = self.parse_legend_x_positions()
-                if y1_lines:
-                    leg1 = self.ax.legend(y1_lines, y1_labels,
+                leg_prop = FontProperties(family=self.setup_mpl_font(font_family), size=legend_font_size)
+                if y1_lines and ax1:
+                    leg1 = ax1.legend(y1_lines, y1_labels,
                                         loc='upper left',
                                         bbox_to_anchor=(positions[0], legend_y),
                                         ncol=legend_cols,
                                         frameon=False,
-                                        fontsize=legend_font_size)
-                    self.ax.add_artist(leg1)
-                
-                if y2_lines:
-                    leg2 = self.ax.legend(y2_lines, y2_labels,
+                                        prop=leg_prop)
+                    ax1.add_artist(leg1)
+
+                if y2_lines and ax2:
+                    leg2 = ax2.legend(y2_lines, y2_labels,
                                         loc='upper left',
                                         bbox_to_anchor=(positions[1], legend_y),
                                         ncol=legend_cols,
                                         frameon=False,
-                                        fontsize=legend_font_size)
-                    self.ax.add_artist(leg2)
-                
-                if y3_lines:
-                    leg3 = self.ax.legend(y3_lines, y3_labels,
+                                        prop=leg_prop)
+                    ax2.add_artist(leg2)
+
+                if y3_lines and ax3:
+                    leg3 = ax3.legend(y3_lines, y3_labels,
                                         loc='upper left',
                                         bbox_to_anchor=(positions[2], legend_y),
                                         ncol=legend_cols,
                                         frameon=False,
-                                        fontsize=legend_font_size)
-                    self.ax.add_artist(leg3)
-                
-                self.canvas.draw()
+                                        prop=leg_prop)
+                    ax3.add_artist(leg3)
+
+                self.canvas.draw_idle()
                 
             except Exception as e:
                 self.logger.error(f"更新图例失败: {str(e)}")
