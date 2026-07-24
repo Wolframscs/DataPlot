@@ -540,7 +540,7 @@ class DataLoaderMixin:
                 elif os.path.exists(os.path.dirname(cur_file)):
                     initial_dir = os.path.dirname(cur_file)
             if not initial_dir or not os.path.exists(initial_dir):
-                initial_dir = ""
+                initial_dir = os.path.abspath(".")
 
         filename, _ = QFileDialog.getOpenFileName(self, "选择文件", initial_dir, filter_str)
         if filename:

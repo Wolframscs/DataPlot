@@ -2165,6 +2165,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self._saved_panel_width = def_panel_w
         self._saved_canvas_width = def_canvas_w
         self._saved_canvas_height = def_canvas_h
+        self._last_browse_dir = os.path.abspath(".")
         
         self.panel_width_var.set(str(def_panel_w))
         self.canvas_width_var.set(str(def_canvas_w))

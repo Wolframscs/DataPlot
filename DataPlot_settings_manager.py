@@ -7,6 +7,16 @@ class SettingsMixin:
             h_val = self.plot_display_widget.height()
             if h_val >= 200:
                 self._saved_canvas_height = h_val
+        
+        browse_dir = getattr(self, '_last_browse_dir', '')
+        if not browse_dir and hasattr(self, 'file_path') and self.file_path.get():
+            fp = self.file_path.get()
+            if os.path.exists(fp):
+                browse_dir = os.path.dirname(fp)
+            elif os.path.exists(os.path.dirname(fp)):
+                browse_dir = os.path.dirname(fp)
+        if not browse_dir:
+            browse_dir = os.path.abspath(".")
 
         settings = {
             'font_family': self.font_family.get(),
@@ -61,7 +71,7 @@ class SettingsMixin:
             'canvas_width': max(300, int(getattr(self, '_saved_canvas_width', 1000))),
             'canvas_height': max(300, int(getattr(self, '_saved_canvas_height', 800))),
             'canvas_bg': self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else '默认(白色)',
-            'last_browse_dir': getattr(self, '_last_browse_dir', '')
+            'last_browse_dir': browse_dir
         }
         try:
             with open('settings.json', 'w', encoding='utf-8') as f:
