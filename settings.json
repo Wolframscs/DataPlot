@@ -37,6 +37,7 @@
     "panel_font_size": "13",
     "panel_width": 560,
     "canvas_width": 1000,
-    "canvas_height": 840,
-    "canvas_bg": "默认(白色)"
+    "canvas_height": 800,
+    "canvas_bg": "默认(白色)",
+    "last_browse_dir": ""
 }

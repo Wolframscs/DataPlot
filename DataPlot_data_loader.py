@@ -531,9 +531,23 @@ class DataLoaderMixin:
         else:
             filter_str = "Excel/CSV files (*.xlsx *.csv);;Excel files (*.xlsx);;CSV files (*.csv);;All files (*.*)"
             
-        filename, _ = QFileDialog.getOpenFileName(self, "选择文件", "", filter_str)
+        initial_dir = getattr(self, '_last_browse_dir', '')
+        if not initial_dir or not os.path.exists(initial_dir):
+            if hasattr(self, 'file_path') and self.file_path.get():
+                cur_file = self.file_path.get()
+                if os.path.exists(cur_file):
+                    initial_dir = os.path.dirname(cur_file)
+                elif os.path.exists(os.path.dirname(cur_file)):
+                    initial_dir = os.path.dirname(cur_file)
+            if not initial_dir or not os.path.exists(initial_dir):
+                initial_dir = ""
+
+        filename, _ = QFileDialog.getOpenFileName(self, "选择文件", initial_dir, filter_str)
         if filename:
             self.file_path.set(filename)
+            self._last_browse_dir = os.path.dirname(filename)
+            if hasattr(self, 'save_settings'):
+                self.save_settings()
             try:
                 if filename.endswith('.xlsx'):
                     engine = 'calamine' if HAS_CALAMINE else None

@@ -60,7 +60,8 @@ class SettingsMixin:
             'panel_width': max(200, int(getattr(self, '_saved_panel_width', 560))),
             'canvas_width': max(300, int(getattr(self, '_saved_canvas_width', 1000))),
             'canvas_height': max(300, int(getattr(self, '_saved_canvas_height', 800))),
-            'canvas_bg': self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else '默认(白色)'
+            'canvas_bg': self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else '默认(白色)',
+            'last_browse_dir': getattr(self, '_last_browse_dir', '')
         }
         try:
             with open('settings.json', 'w', encoding='utf-8') as f:
@@ -147,6 +148,7 @@ class SettingsMixin:
                 self._saved_panel_width = pw
                 self._saved_canvas_width = cw
                 self._saved_canvas_height = ch
+                self._last_browse_dir = settings.get('last_browse_dir', '')
                 if hasattr(self, 'panel_width_var'):
                     self.panel_width_var.set(str(pw))
                 if hasattr(self, 'canvas_width_var'):
