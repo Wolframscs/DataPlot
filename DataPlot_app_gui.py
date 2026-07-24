@@ -25,6 +25,7 @@ QLineEdit = CustomLineEdit
 import matplotlib
 matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
 
 import pandas as pd
@@ -224,10 +225,32 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             '虚线': '--',
             '点线': ':',
             '点划线': '-.',
+            '无': 'None',
+            '混合': '混合'
         }
         
+        # 定义标记选项
+        self.marker_styles_dict = {
+            '无': None,
+            'o (圆点)': 'o',
+            's (方块)': 's',
+            '^ (三角)': '^',
+            'x (叉号)': 'x',
+            '* (星号)': '*',
+            '+ (加号)': '+',
+            'd (菱形)': 'd',
+            'v (倒三角)': 'v',
+            '混合': '混合'
+        }
+        
+        self.mixed_line_styles_list = ['-', '--', ':', '-.']
+        self.mixed_markers_list = ['o', 's', '^', 'x', '*', '+', 'd', 'v']
+
         self.line_styles = []
         self.color_schemes = []
+        self.markers = []
+        self.marker_size_var = Var("5")
+        self.markevery_var = Var("1")
         
         self.version = "1.0.4"
         self._update_timer = None
@@ -1062,9 +1085,19 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         plot_config_content_lay.addWidget(self.font_size_entry, 2, 5)
         
         # Color schemes mapping
+        default_colors = [
+            'blue', 'green', 'purple', 'orange', 'pink', 
+            'gray', 'olive', 'cyan', 'brown', 'red',
+            'teal', 'magenta', 'yellow', 'navy', 'maroon',
+            'lime', 'turquoise', 'tan', 'gold', 'indigo',
+            'violet', 'salmon', 'darkgreen', 'darkblue', 'darkred'
+        ]
+        self.default_cmap = ListedColormap(default_colors, name='Default')
+
         self.color_schemes_dict = {
-            '默认': None,
+            'Default': self.default_cmap,
             'Tab10': plt.cm.tab10,
+            'Tab20': plt.cm.tab20,
             'Set1': plt.cm.Set1,
             'Set2': plt.cm.Set2,
             'Set3': plt.cm.Set3,
@@ -1075,12 +1108,16 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             'Pastel2': plt.cm.Pastel2
         }
 
-        # Y1-Y3 line styles and colors
+        # Y1-Y3 line styles, markers and colors (1:1:1 equal proportions)
+        self.line_styles.clear()
+        self.color_schemes.clear()
+        self.markers.clear()
+
         for i in range(3):
             row = 3 + i
             
-            # Y1-Y3 Style
-            style_var = Var('点划线' if i == 2 else list(self.line_styles_dict.keys())[i])
+            # Y1-Y3 Line Style (Cols 0, 1)
+            style_var = Var('点划线' if i == 2 else ('虚线' if i == 1 else '实线'))
             style_combo = CustomComboBox()
             style_combo.addItems(list(self.line_styles_dict.keys()))
             bind_combobox(style_combo, style_var)
@@ -1089,21 +1126,42 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             self.line_styles.append(style_var)
             style_var.trace_add('write', lambda *args: self.update_plot())
             
-            # Y1-Y3 Color
-            if i == 0:
-                default_scheme = 'Tab10'
-            elif i == 1:
-                default_scheme = 'Set1'
-            else:
-                default_scheme = 'Dark2'
-            scheme_var = Var(default_scheme)
+            # Y1-Y3 Marker (Cols 2, 3)
+            marker_var = Var('无')
+            marker_combo = CustomComboBox()
+            marker_combo.addItems(list(self.marker_styles_dict.keys()))
+            bind_combobox(marker_combo, marker_var)
+            plot_config_content_lay.addWidget(QLabel(f"Y{i+1}标记:"), row, 2)
+            plot_config_content_lay.addWidget(marker_combo, row, 3)
+            self.markers.append(marker_var)
+            marker_var.trace_add('write', lambda *args: self.update_plot())
+
+            # Y1-Y3 Color (Cols 4, 5) - All default to 'Default'
+            scheme_var = Var('Default')
             scheme_combo = CustomComboBox()
             scheme_combo.addItems(list(self.color_schemes_dict.keys()))
             bind_combobox(scheme_combo, scheme_var)
-            plot_config_content_lay.addWidget(QLabel(f"Y{i+1}配色:"), row, 2)
-            plot_config_content_lay.addWidget(scheme_combo, row, 3, 1, 3)
+            plot_config_content_lay.addWidget(QLabel(f"Y{i+1}配色:"), row, 4)
+            plot_config_content_lay.addWidget(scheme_combo, row, 5)
             self.color_schemes.append(scheme_var)
             scheme_var.trace_add('write', lambda *args: self.update_plot())
+
+        # Row 6: Marker Size & Markevery inputs
+        plot_config_content_lay.addWidget(QLabel("标记尺寸:"), 6, 0)
+        self.marker_size_entry = QLineEdit()
+        self.marker_size_entry.setFixedWidth(50)
+        bind_lineedit(self.marker_size_entry, self.marker_size_var)
+        self.marker_size_entry.returnPressed.connect(lambda: self.update_plot())
+        plot_config_content_lay.addWidget(self.marker_size_entry, 6, 1)
+        self.marker_size_var.trace_add('write', lambda *args: self.update_plot())
+
+        plot_config_content_lay.addWidget(QLabel("标记间隔:"), 6, 2)
+        self.markevery_entry = QLineEdit()
+        self.markevery_entry.setFixedWidth(50)
+        bind_lineedit(self.markevery_entry, self.markevery_var)
+        self.markevery_entry.returnPressed.connect(lambda: self.update_plot())
+        plot_config_content_lay.addWidget(self.markevery_entry, 6, 3)
+        self.markevery_var.trace_add('write', lambda *args: self.update_plot())
             
         plot_config_box_lay = QVBoxLayout(plot_config_groupbox)
         plot_config_box_lay.setContentsMargins(10, 0, 10, 10)
@@ -2136,6 +2194,20 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.legend_visible.set(True)
         self.legend_y.set("1.02")
         self.legend_x_positions_str.set("0, 0.3, 0.7")
+        if len(self.line_styles) >= 3:
+            self.line_styles[0].set("实线")
+            self.line_styles[1].set("虚线")
+            self.line_styles[2].set("点划线")
+        if len(self.color_schemes) >= 3:
+            self.color_schemes[0].set("Default")
+            self.color_schemes[1].set("Default")
+            self.color_schemes[2].set("Default")
+        if len(self.markers) >= 3:
+            self.markers[0].set("无")
+            self.markers[1].set("无")
+            self.markers[2].set("无")
+        self.marker_size_var.set("5")
+        self.markevery_var.set("1")
         self.update_plot()
 
     def reset_advanced_settings(self):

@@ -25,6 +25,40 @@ class PlotEngineMixin:
                 return label_str[:pos].rstrip()
             return label_str
 
+    def get_line_and_marker_props(self, axis_idx, curve_idx):
+        """
+        获取给定 Y 轴 (0, 1, 2) 和曲线序号 (curve_idx: 0, 1, 2...) 的线型、标记、尺寸和间隔配置。
+        支持 '混合' 线型（循环使用 -, --, :, -.）和 '混合' 标记（循环使用 o, s, ^, x, *）。
+        """
+        mixed_line_styles = getattr(self, 'mixed_line_styles_list', ['-', '--', ':', '-.'])
+        style_choice = self.line_styles[axis_idx].get() if hasattr(self, 'line_styles') and len(self.line_styles) > axis_idx else '实线'
+        if style_choice == '混合':
+            ls = mixed_line_styles[curve_idx % len(mixed_line_styles)]
+        elif style_choice == '无':
+            ls = 'None'
+        else:
+            ls = getattr(self, 'line_styles_dict', {}).get(style_choice, '-')
+            
+        mixed_markers = getattr(self, 'mixed_markers_list', ['o', 's', '^', 'x', '*', '+', 'd', 'v'])
+        marker_choice = self.markers[axis_idx].get() if hasattr(self, 'markers') and len(self.markers) > axis_idx else '无'
+        if marker_choice == '混合':
+            mk = mixed_markers[curve_idx % len(mixed_markers)]
+        else:
+            mk = getattr(self, 'marker_styles_dict', {}).get(marker_choice, None)
+            
+        ms = self.safe_float_convert(self.marker_size_var.get(), 5.0) if hasattr(self, 'marker_size_var') else 5.0
+        me = int(self.safe_float_convert(self.markevery_var.get(), 1.0)) if hasattr(self, 'markevery_var') else 1
+        if me < 1:
+            me = 1
+            
+        props = {'linestyle': ls}
+        if mk is not None:
+            props['marker'] = mk
+            props['markersize'] = ms
+            props['markevery'] = me
+            
+        return props
+
     def resolve_val(self, val_val, default_min, default_max):
         if val_val is None:
             return None
@@ -454,11 +488,12 @@ class PlotEngineMixin:
                     color_map = self.color_schemes_dict[self.color_schemes[0].get()]
                     color = plt.cm.tab10(idx % 10) if color_map is None else color_map(idx % color_map.N)
                     
+                    style_props = self.get_line_and_marker_props(0, idx)
                     line = self.ax.plot(x_plot, y_plot,
                                       label=f"Cycle {c}",
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
-                                      linestyle=self.line_styles_dict[self.line_styles[0].get()])
+                                      **style_props)
                     all_lines.extend(line)
                     all_labels.append(f"Cycle {c}")
                     all_y_plots.extend(y_plot)
@@ -498,11 +533,12 @@ class PlotEngineMixin:
                             color_idx = idx * len(y1_data) + i
                             color = plt.cm.tab10(color_idx % 10) if color_map is None else color_map(color_idx % color_map.N)
                             cleaned_col = self.clean_legend_label(col)
+                            style_props = self.get_line_and_marker_props(0, color_idx)
                             line = self.ax.plot(df_c_plot[x_col], df_c_plot[col],
                                                label=f"C{c}_{cleaned_col}",
                                                linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                                color=color,
-                                               linestyle=self.line_styles_dict[self.line_styles[0].get()])
+                                               **style_props)
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
 
@@ -512,11 +548,12 @@ class PlotEngineMixin:
                             color_idx = idx * len(y2_data) + i
                             color = plt.cm.tab10(color_idx % 10) if color_map is None else color_map(color_idx % color_map.N)
                             cleaned_col = self.clean_legend_label(col)
+                            style_props = self.get_line_and_marker_props(1, color_idx)
                             line = ax2.plot(df_c_plot[x_col], df_c_plot[col],
                                                label=f"C{c}_{cleaned_col}",
                                                linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                                color=color,
-                                               linestyle=self.line_styles_dict[self.line_styles[1].get()])
+                                               **style_props)
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
 
@@ -526,11 +563,12 @@ class PlotEngineMixin:
                             color_idx = idx * len(y3_data) + i
                             color = plt.cm.tab10(color_idx % 10) if color_map is None else color_map(color_idx % color_map.N)
                             cleaned_col = self.clean_legend_label(col)
+                            style_props = self.get_line_and_marker_props(2, color_idx)
                             line = ax3.plot(df_c_plot[x_col], df_c_plot[col],
                                                label=f"C{c}_{cleaned_col}",
                                                linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                                color=color,
-                                               linestyle=self.line_styles_dict[self.line_styles[2].get()])
+                                               **style_props)
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
 
@@ -996,11 +1034,12 @@ class PlotEngineMixin:
                 for i, col in enumerate(y1_data):
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
+                    style_props = self.get_line_and_marker_props(0, i)
                     line = self.ax.plot(x_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
-                                      linestyle=self.line_styles_dict[self.line_styles[0].get()])
+                                      **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
                 self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=10)
@@ -1030,11 +1069,12 @@ class PlotEngineMixin:
                 for i, col in enumerate(y2_data):
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
+                    style_props = self.get_line_and_marker_props(1, i)
                     line = ax2.plot(x_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
-                                      linestyle=self.line_styles_dict[self.line_styles[1].get()])
+                                      **style_props)
                     y2_lines_temp.extend(line)
                     y2_labels_temp.append(cleaned_label)
                 all_lines.extend(y2_lines_temp)
@@ -1057,11 +1097,12 @@ class PlotEngineMixin:
                 for i, col in enumerate(y3_data):
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
+                    style_props = self.get_line_and_marker_props(2, i)
                     line = ax3.plot(x_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
-                                      linestyle=self.line_styles_dict[self.line_styles[2].get()])
+                                      **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
                 ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)

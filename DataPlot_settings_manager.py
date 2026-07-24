@@ -64,6 +64,18 @@ class SettingsMixin:
             'adv_y1_margin_min_px': self.adv_y1_margin_min_px.get(),
             'adv_y1_max_right_pct': self.adv_y1_max_right_pct.get(),
             
+            'y1_style': self.line_styles[0].get() if len(self.line_styles) > 0 else '实线',
+            'y2_style': self.line_styles[1].get() if len(self.line_styles) > 1 else '虚线',
+            'y3_style': self.line_styles[2].get() if len(self.line_styles) > 2 else '点划线',
+            'y1_scheme': self.color_schemes[0].get() if len(self.color_schemes) > 0 else 'Default',
+            'y2_scheme': self.color_schemes[1].get() if len(self.color_schemes) > 1 else 'Default',
+            'y3_scheme': self.color_schemes[2].get() if len(self.color_schemes) > 2 else 'Default',
+            'y1_marker': self.markers[0].get() if len(self.markers) > 0 else '无',
+            'y2_marker': self.markers[1].get() if len(self.markers) > 1 else '无',
+            'y3_marker': self.markers[2].get() if len(self.markers) > 2 else '无',
+            'marker_size': self.marker_size_var.get() if hasattr(self, 'marker_size_var') else '5',
+            'markevery': self.markevery_var.get() if hasattr(self, 'markevery_var') else '1',
+            
             # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
             'panel_font_size': self.panel_font_size.get() if hasattr(self, 'panel_font_size') else '13',
@@ -98,6 +110,29 @@ class SettingsMixin:
                 self.max_plot_points.set(max_pts)
                 self.legend_font_size.set(settings.get('legend_font_size', '18'))
                 self.legend_cols.set(settings.get('legend_cols', '1'))
+                
+                if len(self.line_styles) > 0:
+                    self.line_styles[0].set(settings.get('y1_style', '实线'))
+                if len(self.line_styles) > 1:
+                    self.line_styles[1].set(settings.get('y2_style', '虚线'))
+                if len(self.line_styles) > 2:
+                    self.line_styles[2].set(settings.get('y3_style', '点划线'))
+                if len(self.color_schemes) > 0:
+                    self.color_schemes[0].set(settings.get('y1_scheme', 'Default'))
+                if len(self.color_schemes) > 1:
+                    self.color_schemes[1].set(settings.get('y2_scheme', 'Default'))
+                if len(self.color_schemes) > 2:
+                    self.color_schemes[2].set(settings.get('y3_scheme', 'Default'))
+                if len(self.markers) > 0:
+                    self.markers[0].set(settings.get('y1_marker', '无'))
+                if len(self.markers) > 1:
+                    self.markers[1].set(settings.get('y2_marker', '无'))
+                if len(self.markers) > 2:
+                    self.markers[2].set(settings.get('y3_marker', '无'))
+                if hasattr(self, 'marker_size_var'):
+                    self.marker_size_var.set(settings.get('marker_size', '5'))
+                if hasattr(self, 'markevery_var'):
+                    self.markevery_var.set(settings.get('markevery', '1'))
                 
                 # Load X & Y axes configs
                 self.x_min_var.set(settings.get('x_min', ''))
