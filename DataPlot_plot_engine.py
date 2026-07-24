@@ -967,6 +967,13 @@ class PlotEngineMixin:
                 elif '循环时间' in df_to_plot.columns:
                     x_col = '循环时间'
                     
+            if x_col in ['Index', 'index'] and x_col not in df_to_plot.columns:
+                x_series = pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
+            elif x_col in df_to_plot.columns:
+                x_series = df_to_plot[x_col]
+            else:
+                x_series = pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
+                    
             font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
             font_family = self.font_family.get()
             plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
@@ -989,7 +996,7 @@ class PlotEngineMixin:
                 for i, col in enumerate(y1_data):
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
-                    line = self.ax.plot(df_to_plot[x_col], df_to_plot[col],
+                    line = self.ax.plot(x_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
@@ -1023,7 +1030,7 @@ class PlotEngineMixin:
                 for i, col in enumerate(y2_data):
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
-                    line = ax2.plot(df_to_plot[x_col], df_to_plot[col],
+                    line = ax2.plot(x_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
@@ -1050,7 +1057,7 @@ class PlotEngineMixin:
                 for i, col in enumerate(y3_data):
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
-                    line = ax3.plot(df_to_plot[x_col], df_to_plot[col],
+                    line = ax3.plot(x_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
@@ -1118,10 +1125,8 @@ class PlotEngineMixin:
                 xmin_str = self.x_min_var.get().strip()
                 xmax_str = self.x_max_var.get().strip()
                 if xmin_str or xmax_str:
-                    x_col = self.x_axis.get()
-                    if x_col in df_to_plot.columns:
-                        x_values = pd.to_numeric(df_to_plot[x_col], errors='coerce').dropna()
-                        if len(x_values) > 0:
+                    x_values = pd.to_numeric(x_series, errors='coerce').dropna()
+                    if len(x_values) > 0:
                             xmin_default = x_values.min()
                             xmax_default = x_values.max()
                             
