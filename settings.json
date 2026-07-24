@@ -2,7 +2,7 @@
     "font_family": "Microsoft YaHei",
     "font_size": "18",
     "legend_y": "1.02",
-    "legend_x_positions": "0, 0.3, 0.7",
+    "legend_x_positions": "0, 0.3, 0",
     "frame_width": "1.5",
     "line_width": "1.5",
     "auto_downsample": true,
@@ -44,11 +44,16 @@
     "y3_marker": "无",
     "marker_size": "5",
     "markevery": "1",
+    "dqdv_vmin": "",
+    "dqdv_vmax": "",
+    "dqdv_npts": "1000",
+    "dqdv_stat": "None",
+    "filter_type": "高斯滤波",
     "panel_font_family": "Microsoft YaHei",
     "panel_font_size": "13",
     "panel_width": 560,
     "canvas_width": 1000,
-    "canvas_height": 880,
+    "canvas_height": 916,
     "canvas_bg": "默认(白色)",
-    "last_browse_dir": "e:\\ProcedureCode\\Antigravity\\DataPlot_QT"
+    "last_browse_dir": "E:/ProcedureCode/Antigravity/DataPlot_QT/TestData"
 }

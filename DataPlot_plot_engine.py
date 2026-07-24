@@ -59,6 +59,66 @@ class PlotEngineMixin:
             
         return props
 
+    def apply_filtering(self, y_clean, filter_type, w_size=15, p_order=2):
+        """统一图像/数据的滤波处理，支持 S-G(含纯NumPy后备)、移动平均、中值、高斯、指数平滑"""
+        if not filter_type or filter_type == "无" or len(y_clean) == 0:
+            return y_clean
+            
+        w_size = max(3, int(w_size))
+        if w_size % 2 == 0:
+            w_size += 1
+            
+        if filter_type == "Savitzky-Golay":
+            po = min(p_order, w_size - 1)
+            try:
+                from scipy.signal import savgol_filter
+                local_w = min(w_size, len(y_clean))
+                if local_w % 2 == 0:
+                    local_w = max(1, local_w - 1)
+                local_po = min(po, local_w - 1)
+                if local_w > local_po and local_w >= 3:
+                    return savgol_filter(y_clean, window_length=local_w, polyorder=local_po)
+                else:
+                    return pd.Series(y_clean).rolling(window=min(3, len(y_clean)), center=True, min_periods=1).mean().values
+            except ImportError:
+                half_w = (w_size - 1) // 2
+                if len(y_clean) < w_size:
+                    return pd.Series(y_clean).rolling(window=min(3, len(y_clean)), center=True, min_periods=1).mean().values
+                b = np.mat([[k**i for i in range(po + 1)] for k in range(-half_w, half_w + 1)])
+                m = np.linalg.pinv(b).A[0]
+                firstvals = y_clean[0] - np.abs(y_clean[1:half_w + 1][::-1] - y_clean[0])
+                lastvals = y_clean[-1] + np.abs(y_clean[-half_w - 1:-1][::-1] - y_clean[-1])
+                y_padded = np.concatenate((firstvals, y_clean, lastvals))
+                return np.convolve(m[::-1], y_padded, mode='valid')
+
+        elif filter_type == "移动平均":
+            return pd.Series(y_clean).rolling(window=w_size, center=True, min_periods=1).mean().values
+
+        elif filter_type == "中值滤波":
+            return pd.Series(y_clean).rolling(window=w_size, center=True, min_periods=1).median().values
+
+        elif filter_type == "高斯滤波":
+            try:
+                from scipy.ndimage import gaussian_filter1d
+                sigma = max(1.0, w_size / 6.0)
+                return gaussian_filter1d(y_clean, sigma=sigma)
+            except ImportError:
+                radius = w_size // 2
+                x_g = np.arange(-radius, radius + 1)
+                sigma = max(1.0, w_size / 6.0)
+                kernel = np.exp(-0.5 * (x_g / sigma) ** 2)
+                kernel /= kernel.sum()
+                firstvals = np.repeat(y_clean[0], radius)
+                lastvals = np.repeat(y_clean[-1], radius)
+                y_padded = np.concatenate((firstvals, y_clean, lastvals))
+                return np.convolve(y_padded, kernel, mode='valid')
+
+        elif filter_type == "指数平滑":
+            alpha = 2.0 / (w_size + 1.0)
+            return pd.Series(y_clean).ewm(alpha=alpha, adjust=False).mean().values
+
+        return y_clean
+
     def resolve_val(self, val_val, default_min, default_max):
         if val_val is None:
             return None
@@ -320,6 +380,23 @@ class PlotEngineMixin:
                 set_axis_style(self.ax)
 
             all_x_points = []
+            stat_cycles = []
+            stat_values = []
+            self.ax_stat_ref = None
+
+            # 提前计算所有选中循环的整体电压最小值与最大值，作为默认 Vmin/Vmax 网格边界
+            overall_u_min = float('inf')
+            overall_u_max = float('-inf')
+            if plot_type in ['dqdv', 'dvdq']:
+                for c_item in cycles:
+                    df_sub_u = self.result_df[self.result_df[cycle_col_name] == c_item]
+                    if voltage_col_name in df_sub_u.columns:
+                        u_series = pd.to_numeric(df_sub_u[voltage_col_name], errors='coerce').dropna()
+                        if len(u_series) > 0:
+                            overall_u_min = min(overall_u_min, float(u_series.min()))
+                            overall_u_max = max(overall_u_max, float(u_series.max()))
+                if overall_u_min == float('inf') or overall_u_max == float('-inf'):
+                    overall_u_min, overall_u_max = 2.0, 4.5
 
             for idx, c in enumerate(cycles):
                 df_c = self.result_df[self.result_df[cycle_col_name] == c].copy()
@@ -403,87 +480,122 @@ class PlotEngineMixin:
                     if not np.any(non_zero_mask):
                         continue
                     
-                    df_c = df_c[non_zero_mask]
-                    cap_vals = cap_vals[non_zero_mask]
-                    t_rel = t_rel[non_zero_mask]
+                    df_c_sub = df_c[non_zero_mask]
+                    u_raw = pd.to_numeric(df_c_sub[voltage_col_name], errors='coerce').values
+                    q_raw = cap_vals[non_zero_mask]
+                    t_sub = t_rel[non_zero_mask]
                     
-                    u_vals = pd.to_numeric(df_c[voltage_col_name], errors='coerce').values
+                    # 尝试计算工步时间作为候选 X 轴
+                    step_t_sub = pd.to_numeric(df_c_sub.get('工步时间(s)', t_sub), errors='coerce').fillna(0).values
                     
-                    target_t = t_rel + time_step
-                    j_indices = np.searchsorted(t_rel, target_t)
-                    j_indices = np.minimum(j_indices, len(t_rel) - 1)
-                    valid = target_t <= t_rel[-1]
-
-                    if not np.any(valid):
+                    valid_mask = ~np.isnan(u_raw) & ~np.isnan(q_raw)
+                    u_valid = u_raw[valid_mask]
+                    q_valid = q_raw[valid_mask]
+                    t_valid_sub = t_sub[valid_mask]
+                    step_t_valid_sub = step_t_sub[valid_mask]
+                    
+                    if len(u_valid) < 5:
                         continue
 
-                    dq_diff = cap_vals[j_indices] - cap_vals
-                    du_diff = u_vals[j_indices] - u_vals
+                    # 1. 独一无二的电压点去除 (去除重复电压点)
+                    _, unique_indices = np.unique(u_valid, return_index=True)
+                    unique_indices = np.sort(unique_indices)
+                    u_clean = u_valid[unique_indices]
+                    q_clean = q_valid[unique_indices]
+                    t_clean = t_valid_sub[unique_indices]
+                    step_t_clean = step_t_valid_sub[unique_indices]
+                    
+                    if len(u_clean) < 3:
+                        continue
 
-                    if plot_type == 'dqdv':
-                        y_raw = np.where(du_diff != 0, dq_diff / du_diff, np.nan)
-                    else:
-                        y_raw = np.where(dq_diff != 0, du_diff / dq_diff, np.nan)
+                    # 2. 提取 Vmin, Vmax, 采样点数 v_grid
+                    vmin_str = self.dqdv_vmin_var.get().strip() if hasattr(self, 'dqdv_vmin_var') else ""
+                    vmax_str = self.dqdv_vmax_var.get().strip() if hasattr(self, 'dqdv_vmax_var') else ""
+                    npts_str = self.dqdv_npts_var.get().strip() if hasattr(self, 'dqdv_npts_var') else "100"
+                    
+                    try:
+                        vmin_val = float(vmin_str)
+                    except ValueError:
+                        vmin_val = overall_u_min
+                        
+                    try:
+                        vmax_val = float(vmax_str)
+                    except ValueError:
+                        vmax_val = overall_u_max
+                        
+                    try:
+                        n_pts = int(npts_str)
+                        if n_pts < 5:
+                            n_pts = 100
+                    except ValueError:
+                        n_pts = 100
+                        
+                    if vmin_val >= vmax_val:
+                        vmin_val = overall_u_min
+                        vmax_val = overall_u_max
+                        
+                    v_grid = np.linspace(vmin_val, vmax_val, n_pts)
 
-                    y_valid = y_raw[valid]
-                    t_valid = t_rel[valid]
-                    cap_valid = cap_vals[valid]
-                    u_valid = u_vals[valid]
+                    # 3. 线性插值与梯度计算
+                    sort_idx = np.argsort(u_clean)
+                    u_sorted = u_clean[sort_idx]
+                    q_sorted = q_clean[sort_idx]
+                    t_sorted = t_clean[sort_idx]
+                    step_t_sorted = step_t_clean[sort_idx]
 
-                    s_series = pd.Series(y_valid).interpolate(limit_direction='both').fillna(0)
-                    y_clean = s_series.values
+                    try:
+                        from scipy.interpolate import interp1d
+                        q_interp = interp1d(u_sorted, q_sorted, kind='linear', fill_value="extrapolate")(v_grid)
+                        t_interp = interp1d(u_sorted, t_sorted, kind='linear', fill_value="extrapolate")(v_grid)
+                        step_t_interp = interp1d(u_sorted, step_t_sorted, kind='linear', fill_value="extrapolate")(v_grid)
+                    except Exception:
+                        q_interp = np.interp(v_grid, u_sorted, q_sorted)
+                        t_interp = np.interp(v_grid, u_sorted, t_sorted)
+                        step_t_interp = np.interp(v_grid, u_sorted, step_t_sorted)
 
-                    if filter_type == "Savitzky-Golay":
-                        if has_scipy:
-                            local_w_size = w_size
-                            local_p_order = p_order
-                            if len(y_clean) < local_w_size:
-                                local_w_size = len(y_clean)
-                                if local_w_size % 2 == 0:
-                                    local_w_size = max(1, local_w_size - 1)
-                                if local_p_order >= local_w_size:
-                                    local_p_order = max(0, local_w_size - 1)
-                            
-                            if local_w_size > local_p_order and local_w_size >= 3:
-                                y_plot = savgol_filter(y_clean, window_length=local_w_size, polyorder=local_p_order)
-                            else:
-                                y_plot = pd.Series(y_clean).rolling(window=min(3, len(y_clean)), center=True, min_periods=1).mean().values
-                        else:
-                            self.update_status("警告: 未安装 scipy 库，Savitzky-Golay 自动降级为移动平均。")
-                            y_plot = pd.Series(y_clean).rolling(window=w_size, center=True, min_periods=1).mean().values
-                    elif filter_type == "移动平均":
-                        y_plot = pd.Series(y_clean).rolling(window=w_size, center=True, min_periods=1).mean().values
-                    elif filter_type == "中值滤波":
-                        y_plot = pd.Series(y_clean).rolling(window=w_size, center=True, min_periods=1).median().values
-                    else:
-                        y_plot = y_clean
+                    dq = np.gradient(q_interp)
+                    dv = np.gradient(v_grid)
 
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        if plot_type == 'dqdv':
+                            y_raw = dq / dv
+                        else:  # dvdq
+                            y_raw = dv / dq
+                    y_clean = np.nan_to_num(y_raw, nan=0.0, posinf=0.0, neginf=0.0)
+
+                    # 4. 滤波处理 (支持 SG, 移动平均, 中值, 高斯, 指数平滑)
+                    y_plot = self.apply_filtering(y_clean, filter_type, w_size, p_order)
+
+                    # 5. X 轴灵活响应“循环X轴”下拉框
                     x_choice = self.compare_x_var.get()
                     if x_choice in ["容量", "容量（计算）"]:
-                        x_plot = cap_valid
+                        x_plot = q_interp
                         x_label = "Capacity / Ah"
                     elif x_choice in ["循环时间", "循环时间（计算）"]:
-                        x_plot = t_valid
+                        x_plot = t_interp
                         x_label = "Time / s"
                     elif x_choice in ["工步时间", "工步时间（计算）", "工步时间(s)"]:
-                        step_t_df = self.compute_step_time(df_c, cycle_col_name, step_col_name, time_col_name)
-                        if '工步时间(s)' in step_t_df.columns:
-                            x_plot = pd.to_numeric(step_t_df['工步时间(s)'], errors='coerce').values[valid]
-                        else:
-                            x_plot = t_valid
+                        x_plot = step_t_interp
                         x_label = "Step Time / s"
-                    elif x_choice == voltage_col_name:
-                        x_plot = u_valid
-                        x_label = f"{voltage_col_name} / V"
-                    elif x_choice == "Index":
-                        x_plot = np.arange(len(u_vals))[valid]
-                        x_label = "Index"
-                    elif x_choice in df_c.columns:
-                        x_plot = pd.to_numeric(df_c[x_choice], errors='coerce').values[valid]
-                        x_label = x_choice
+                    elif x_choice == voltage_col_name or x_choice == "电压":
+                        x_plot = v_grid
+                        x_label = f"Voltage / V ({voltage_col_name})"
                     else:
-                        x_plot = cap_valid
-                        x_label = "Capacity / Ah"
+                        if plot_type == 'dqdv':
+                            x_plot = v_grid
+                            x_label = f"Voltage / V ({voltage_col_name})"
+                        else:
+                            x_plot = q_interp
+                            x_label = "Capacity / Ah"
+
+                    # 记录统计特征 (均值/方差)
+                    stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
+                    if stat_type == "均值":
+                        stat_cycles.append(c)
+                        stat_values.append(float(np.mean(y_plot)))
+                    elif stat_type == "方差":
+                        stat_cycles.append(c)
+                        stat_values.append(float(np.var(y_plot)))
 
                     color_map = self.color_schemes_dict[self.color_schemes[0].get()]
                     color = plt.cm.tab10(idx % 10) if color_map is None else color_map(idx % color_map.N)
@@ -582,6 +694,23 @@ class PlotEngineMixin:
                 else:
                     y_label_str = "dQ/dV / (Ah/V)" if plot_type == 'dqdv' else "dV/dQ / (V/Ah)"
                 self.ax.set_ylabel(y_label_str, fontsize=font_size, fontfamily=font_family, color='black', labelpad=10)
+                
+                # 绘制副 Y 轴统计折线 (均值 / 方差 点线图)
+                stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
+                if stat_type in ["均值", "方差"] and len(stat_cycles) > 0:
+                    ax_stat = self.ax.twinx()
+                    self.ax_stat_ref = ax_stat
+                    ax_stat.spines['right'].set_position(('outward', 0))
+                    set_axis_style(ax_stat)
+                    
+                    label_str = f"dQ/dV {stat_type}"
+                    line_stat = ax_stat.plot(stat_cycles, stat_values, 'o--', 
+                                             color='crimson', linewidth=1.8, markersize=6, 
+                                             label=label_str)
+                    ax_stat.set_ylabel(label_str, fontsize=font_size, fontfamily=font_family, color='crimson', labelpad=10)
+                    ax_stat.tick_params(axis='y', colors='crimson', labelsize=font_size)
+                    all_lines.extend(line_stat)
+                    all_labels.append(label_str)
                 
                 # 默认百分位限值计算
                 ymin_default = None

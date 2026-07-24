@@ -75,6 +75,11 @@ class SettingsMixin:
             'y3_marker': self.markers[2].get() if len(self.markers) > 2 else '无',
             'marker_size': self.marker_size_var.get() if hasattr(self, 'marker_size_var') else '5',
             'markevery': self.markevery_var.get() if hasattr(self, 'markevery_var') else '1',
+            'dqdv_vmin': self.dqdv_vmin_var.get() if hasattr(self, 'dqdv_vmin_var') else '',
+            'dqdv_vmax': self.dqdv_vmax_var.get() if hasattr(self, 'dqdv_vmax_var') else '',
+            'dqdv_npts': self.dqdv_npts_var.get() if hasattr(self, 'dqdv_npts_var') else '100',
+            'dqdv_stat': self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else 'None',
+            'filter_type': self.filter_type_var.get() if hasattr(self, 'filter_type_var') else '无',
             
             # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
@@ -133,6 +138,16 @@ class SettingsMixin:
                     self.marker_size_var.set(settings.get('marker_size', '5'))
                 if hasattr(self, 'markevery_var'):
                     self.markevery_var.set(settings.get('markevery', '1'))
+                if hasattr(self, 'dqdv_vmin_var'):
+                    self.dqdv_vmin_var.set(settings.get('dqdv_vmin', ''))
+                if hasattr(self, 'dqdv_vmax_var'):
+                    self.dqdv_vmax_var.set(settings.get('dqdv_vmax', ''))
+                if hasattr(self, 'dqdv_npts_var'):
+                    self.dqdv_npts_var.set(settings.get('dqdv_npts', '100'))
+                if hasattr(self, 'dqdv_stat_var'):
+                    self.dqdv_stat_var.set(settings.get('dqdv_stat', 'None'))
+                if hasattr(self, 'filter_type_var'):
+                    self.filter_type_var.set(settings.get('filter_type', '无'))
                 
                 # Load X & Y axes configs
                 self.x_min_var.set(settings.get('x_min', ''))
