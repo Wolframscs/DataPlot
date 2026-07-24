@@ -2002,6 +2002,11 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         except ValueError:
             pass
 
+        if hasattr(self, 'plot_display_widget') and self.plot_display_widget:
+            h_val = self.plot_display_widget.height()
+            if h_val >= 200:
+                self._saved_canvas_height = h_val
+
         self.on_panel_width_entry_changed()
         self.on_canvas_width_entry_changed()
 
@@ -2069,17 +2074,33 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         except ValueError:
             pass
 
+    def center_on_screen(self):
+        """将主窗口中心与当前显示器屏幕中心对齐"""
+        try:
+            screen = QApplication.primaryScreen()
+            if screen:
+                geo = screen.availableGeometry()
+                win_geo = self.frameGeometry()
+                center_x = geo.left() + (geo.width() - win_geo.width()) // 2
+                center_y = geo.top() + (geo.height() - win_geo.height()) // 2
+                self.move(max(geo.left(), center_x), max(geo.top(), center_y))
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"窗口居中失败: {str(e)}")
+
     def apply_loaded_panel_and_canvas_width(self):
-        """加载 settings.json 后：应用保存的面板宽度和画布宽度到主窗口及 splitter"""
+        """加载 settings.json 后：应用保存的面板宽度、画布宽度及画布高度到主窗口及 splitter，并居中屏幕"""
         if not hasattr(self, 'splitter') or not self.splitter:
             return
         pw = int(getattr(self, '_saved_panel_width', 560))
         cw = int(getattr(self, '_saved_canvas_width', 1000))
+        ch = int(getattr(self, '_saved_canvas_height', 800))
         self._is_syncing_splitter = True
         try:
             total_w = pw + cw + self.splitter.handleWidth() + 20
+            total_h = ch + 60
             if not self.isMaximized():
-                self.resize(total_w, self.height())
+                self.resize(total_w, total_h)
             self.splitter.setSizes([pw, cw])
             self.splitter.setStretchFactor(0, 0)
             self.splitter.setStretchFactor(1, 1)
@@ -2093,6 +2114,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             if hasattr(self, 'canvas_width_entry') and self.canvas_width_entry:
                 if self.canvas_width_entry.text() != str(cw):
                     self.canvas_width_entry.setText(str(cw))
+            self.center_on_screen()
         finally:
             self._is_syncing_splitter = False
 
@@ -2139,8 +2161,10 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         def_panel_w = 560
         def_canvas_w = 1000
+        def_canvas_h = 800
         self._saved_panel_width = def_panel_w
         self._saved_canvas_width = def_canvas_w
+        self._saved_canvas_height = def_canvas_h
         
         self.panel_width_var.set(str(def_panel_w))
         self.canvas_width_var.set(str(def_canvas_w))
@@ -2151,9 +2175,13 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             
         self._is_syncing_splitter = True
         try:
-            self.resize(def_panel_w + def_canvas_w, self.height())
+            total_w = def_panel_w + def_canvas_w + (self.splitter.handleWidth() if hasattr(self, 'splitter') and self.splitter else 5) + 20
+            total_h = def_canvas_h + 60
+            if not self.isMaximized():
+                self.resize(total_w, total_h)
             if hasattr(self, 'splitter') and self.splitter:
                 self.splitter.setSizes([def_panel_w, def_canvas_w])
+            self.center_on_screen()
         finally:
             self._is_syncing_splitter = False
                 
@@ -2167,8 +2195,13 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             self._has_shown_once = True
             def_p = int(getattr(self, '_saved_panel_width', 560))
             def_c = int(getattr(self, '_saved_canvas_width', 1000))
+            def_h = int(getattr(self, '_saved_canvas_height', 800))
             self._is_syncing_splitter = True
             try:
+                total_w = def_p + def_c + (self.splitter.handleWidth() if hasattr(self, 'splitter') and self.splitter else 5) + 20
+                total_h = def_h + 60
+                if not self.isMaximized():
+                    self.resize(total_w, total_h)
                 if hasattr(self, 'splitter') and self.splitter:
                     self.splitter.setSizes([def_p, def_c])
                 if hasattr(self, 'panel_width_var'):
@@ -2179,6 +2212,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                     self.panel_width_entry.setText(str(def_p))
                 if hasattr(self, 'canvas_width_entry') and self.canvas_width_entry:
                     self.canvas_width_entry.setText(str(def_c))
+                self.center_on_screen()
             finally:
                 self._is_syncing_splitter = False
 

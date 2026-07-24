@@ -2,7 +2,12 @@ import json
 
 class SettingsMixin:
     def save_settings(self):
-        """保存当前设置"""
+        """保存当前设置到 JSON 文件"""
+        if hasattr(self, 'plot_display_widget') and self.plot_display_widget:
+            h_val = self.plot_display_widget.height()
+            if h_val >= 200:
+                self._saved_canvas_height = h_val
+
         settings = {
             'font_family': self.font_family.get(),
             'font_size': self.font_size.get(),
@@ -49,11 +54,12 @@ class SettingsMixin:
             'adv_y1_margin_min_px': self.adv_y1_margin_min_px.get(),
             'adv_y1_max_right_pct': self.adv_y1_max_right_pct.get(),
             
-            # Panel font, background and layout width configurations
+            # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
             'panel_font_size': self.panel_font_size.get() if hasattr(self, 'panel_font_size') else '13',
             'panel_width': max(200, int(getattr(self, '_saved_panel_width', 560))),
             'canvas_width': max(300, int(getattr(self, '_saved_canvas_width', 1000))),
+            'canvas_height': max(300, int(getattr(self, '_saved_canvas_height', 800))),
             'canvas_bg': self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else '默认(白色)'
         }
         try:
@@ -131,12 +137,16 @@ class SettingsMixin:
 
                 pw = int(settings.get('panel_width', 560))
                 cw = int(settings.get('canvas_width', 1000))
+                ch = int(settings.get('canvas_height', 800))
                 if pw < 200:
                     pw = 560
                 if cw < 300:
                     cw = 1000
+                if ch < 300:
+                    ch = 800
                 self._saved_panel_width = pw
                 self._saved_canvas_width = cw
+                self._saved_canvas_height = ch
                 if hasattr(self, 'panel_width_var'):
                     self.panel_width_var.set(str(pw))
                 if hasattr(self, 'canvas_width_var'):
