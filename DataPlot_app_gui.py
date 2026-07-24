@@ -179,7 +179,7 @@ class CanvasResizeFilter(QObject):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Resize:
             if hasattr(self.gui, 'plot_display_widget') and obj == self.gui.plot_display_widget:
-                if getattr(self.gui, '_is_plotting', False) or getattr(self.gui, '_is_syncing_splitter', False):
+                if getattr(self.gui, '_is_plotting', False) or getattr(self.gui, '_is_syncing_splitter', False) or getattr(self.gui, '_is_loading_settings', False):
                     return super().eventFilter(obj, event)
                 w = event.size().width()
                 saved = getattr(self.gui, '_saved_canvas_width', 0)
@@ -323,6 +323,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
 
         self.init_ui()
         self.load_settings()
+        QTimer.singleShot(0, self.apply_loaded_panel_and_canvas_width)
         self._last_file_type = self.file_type.get()
         
         self.update_file_type()
@@ -2067,6 +2068,33 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                     self.on_window_resize()
         except ValueError:
             pass
+
+    def apply_loaded_panel_and_canvas_width(self):
+        """加载 settings.json 后：应用保存的面板宽度和画布宽度到主窗口及 splitter"""
+        if not hasattr(self, 'splitter') or not self.splitter:
+            return
+        pw = int(getattr(self, '_saved_panel_width', 560))
+        cw = int(getattr(self, '_saved_canvas_width', 1000))
+        self._is_syncing_splitter = True
+        try:
+            total_w = pw + cw + self.splitter.handleWidth() + 20
+            if not self.isMaximized():
+                self.resize(total_w, self.height())
+            self.splitter.setSizes([pw, cw])
+            self.splitter.setStretchFactor(0, 0)
+            self.splitter.setStretchFactor(1, 1)
+            if hasattr(self, 'panel_width_var'):
+                self.panel_width_var.set(str(pw))
+            if hasattr(self, 'canvas_width_var'):
+                self.canvas_width_var.set(str(cw))
+            if hasattr(self, 'panel_width_entry') and self.panel_width_entry:
+                if self.panel_width_entry.text() != str(pw):
+                    self.panel_width_entry.setText(str(pw))
+            if hasattr(self, 'canvas_width_entry') and self.canvas_width_entry:
+                if self.canvas_width_entry.text() != str(cw):
+                    self.canvas_width_entry.setText(str(cw))
+        finally:
+            self._is_syncing_splitter = False
 
     def apply_advanced_settings(self):
         """点击高级配置中的应用按钮：立即应用高级参数设置"""

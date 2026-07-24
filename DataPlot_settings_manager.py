@@ -141,6 +141,8 @@ class SettingsMixin:
                     self.panel_width_var.set(str(pw))
                 if hasattr(self, 'canvas_width_var'):
                     self.canvas_width_var.set(str(cw))
+                if hasattr(self, 'apply_loaded_panel_and_canvas_width'):
+                    self.apply_loaded_panel_and_canvas_width()
         except FileNotFoundError:
             pass  # 使用默认设置
         except Exception as e:
