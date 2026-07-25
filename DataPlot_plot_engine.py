@@ -253,8 +253,11 @@ class PlotEngineMixin:
 
         self.delayed_update()
 
-    def plot_cycle_compare(self, plot_type='regular'):
+    def plot_cycle_compare(self, plot_type=None):
+        """绘制循环对比图，支持常规对比、dQ/dV和dV/dQ模式"""
         try:
+            if plot_type is None:
+                plot_type = self.current_compare_type.get() if hasattr(self, 'current_compare_type') else 'regular'
             if self.result_df is None:
                 return
 
@@ -328,6 +331,7 @@ class PlotEngineMixin:
             font_family = self.font_family.get()
             self.setup_mpl_font(font_family)
 
+            label_pad_val = float(self.safe_float_convert(self.adv_label_pad_var.get(), 10.0)) if hasattr(self, 'adv_label_pad_var') else 10.0
             bg_choice = self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else "默认(白色)"
             current_text_color = '#ffffff' if "黑" in bg_choice else ('#212529' if "灰" in bg_choice else '#000000')
 
@@ -389,7 +393,12 @@ class PlotEngineMixin:
             overall_u_max = float('-inf')
             if plot_type in ['dqdv', 'dvdq']:
                 for c_item in cycles:
-                    df_sub_u = self.result_df[self.result_df[cycle_col_name] == c_item]
+                    try:
+                        c_num = float(c_item)
+                        mask_c = pd.to_numeric(self.result_df[cycle_col_name], errors='coerce') == c_num
+                    except ValueError:
+                        mask_c = self.result_df[cycle_col_name].astype(str) == str(c_item)
+                    df_sub_u = self.result_df[mask_c]
                     if voltage_col_name in df_sub_u.columns:
                         u_series = pd.to_numeric(df_sub_u[voltage_col_name], errors='coerce').dropna()
                         if len(u_series) > 0:
@@ -397,6 +406,12 @@ class PlotEngineMixin:
                             overall_u_max = max(overall_u_max, float(u_series.max()))
                 if overall_u_min == float('inf') or overall_u_max == float('-inf'):
                     overall_u_min, overall_u_max = 2.0, 4.5
+
+                # 动态把计算得到的整体 Vmin 与 Vmax 显示在界面输入框的占位符中
+                if hasattr(self, 'dqdv_vmin_entry') and self.dqdv_vmin_entry:
+                    self.dqdv_vmin_entry.setPlaceholderText(str(round(overall_u_min, 3)))
+                if hasattr(self, 'dqdv_vmax_entry') and self.dqdv_vmax_entry:
+                    self.dqdv_vmax_entry.setPlaceholderText(str(round(overall_u_max, 3)))
 
             for idx, c in enumerate(cycles):
                 df_c = self.result_df[self.result_df[cycle_col_name] == c].copy()
@@ -486,7 +501,10 @@ class PlotEngineMixin:
                     t_sub = t_rel[non_zero_mask]
                     
                     # 尝试计算工步时间作为候选 X 轴
-                    step_t_sub = pd.to_numeric(df_c_sub.get('工步时间(s)', t_sub), errors='coerce').fillna(0).values
+                    if '工步时间(s)' in df_c_sub.columns:
+                        step_t_sub = pd.to_numeric(df_c_sub['工步时间(s)'], errors='coerce').fillna(0).values
+                    else:
+                        step_t_sub = t_sub
                     
                     valid_mask = ~np.isnan(u_raw) & ~np.isnan(q_raw)
                     u_valid = u_raw[valid_mask]
@@ -497,119 +515,158 @@ class PlotEngineMixin:
                     if len(u_valid) < 5:
                         continue
 
-                    # 1. 独一无二的电压点去除 (去除重复电压点)
-                    _, unique_indices = np.unique(u_valid, return_index=True)
-                    unique_indices = np.sort(unique_indices)
-                    u_clean = u_valid[unique_indices]
-                    q_clean = q_valid[unique_indices]
-                    t_clean = t_valid_sub[unique_indices]
-                    step_t_clean = step_t_valid_sub[unique_indices]
-                    
-                    if len(u_clean) < 3:
-                        continue
+                    # 判定数据处理模式：去重 / 原始 / 对比
+                    dqdv_mode = self.dqdv_mode_var.get() if hasattr(self, 'dqdv_mode_var') else "去重"
+                    curves_to_plot = []
+                    x_label = "Voltage / V" if plot_type == 'dqdv' else "Capacity / Ah"
 
-                    # 2. 提取 Vmin, Vmax, 采样点数 v_grid
-                    vmin_str = self.dqdv_vmin_var.get().strip() if hasattr(self, 'dqdv_vmin_var') else ""
-                    vmax_str = self.dqdv_vmax_var.get().strip() if hasattr(self, 'dqdv_vmax_var') else ""
-                    npts_str = self.dqdv_npts_var.get().strip() if hasattr(self, 'dqdv_npts_var') else "100"
-                    
-                    try:
-                        vmin_val = float(vmin_str)
-                    except ValueError:
-                        vmin_val = overall_u_min
+                    # A. 计算 "去重" (提取唯一电压点 -> 排序 -> 匀速网格插值求导)
+                    if dqdv_mode in ["去重", "对比"]:
+                        _, unique_indices = np.unique(u_valid, return_index=True)
+                        unique_indices = np.sort(unique_indices)
+                        u_clean = u_valid[unique_indices]
+                        q_clean = q_valid[unique_indices]
+                        t_clean = t_valid_sub[unique_indices]
+                        step_t_clean = step_t_valid_sub[unique_indices]
                         
-                    try:
-                        vmax_val = float(vmax_str)
-                    except ValueError:
-                        vmax_val = overall_u_max
-                        
-                    try:
-                        n_pts = int(npts_str)
-                        if n_pts < 5:
-                            n_pts = 100
-                    except ValueError:
-                        n_pts = 100
-                        
-                    if vmin_val >= vmax_val:
-                        vmin_val = overall_u_min
-                        vmax_val = overall_u_max
-                        
-                    v_grid = np.linspace(vmin_val, vmax_val, n_pts)
+                        if len(u_clean) >= 3:
+                            vmin_str = self.dqdv_vmin_var.get().strip() if hasattr(self, 'dqdv_vmin_var') else ""
+                            vmax_str = self.dqdv_vmax_var.get().strip() if hasattr(self, 'dqdv_vmax_var') else ""
+                            npts_str = self.dqdv_npts_var.get().strip() if hasattr(self, 'dqdv_npts_var') else "100"
+                            
+                            try: vmin_val = float(vmin_str)
+                            except ValueError: vmin_val = overall_u_min
+                            try: vmax_val = float(vmax_str)
+                            except ValueError: vmax_val = overall_u_max
+                            try:
+                                n_pts = int(npts_str)
+                                if n_pts < 5: n_pts = 100
+                            except ValueError: n_pts = 100
+                            
+                            if vmin_val >= vmax_val:
+                                vmin_val = overall_u_min
+                                vmax_val = overall_u_max
+                                
+                            v_grid = np.linspace(vmin_val, vmax_val, n_pts)
 
-                    # 3. 线性插值与梯度计算
-                    sort_idx = np.argsort(u_clean)
-                    u_sorted = u_clean[sort_idx]
-                    q_sorted = q_clean[sort_idx]
-                    t_sorted = t_clean[sort_idx]
-                    step_t_sorted = step_t_clean[sort_idx]
+                            sort_idx = np.argsort(u_clean)
+                            u_sorted = u_clean[sort_idx]
+                            q_sorted = q_clean[sort_idx]
+                            t_sorted = t_clean[sort_idx]
+                            step_t_sorted = step_t_clean[sort_idx]
 
-                    try:
-                        from scipy.interpolate import interp1d
-                        q_interp = interp1d(u_sorted, q_sorted, kind='linear', fill_value="extrapolate")(v_grid)
-                        t_interp = interp1d(u_sorted, t_sorted, kind='linear', fill_value="extrapolate")(v_grid)
-                        step_t_interp = interp1d(u_sorted, step_t_sorted, kind='linear', fill_value="extrapolate")(v_grid)
-                    except Exception:
-                        q_interp = np.interp(v_grid, u_sorted, q_sorted)
-                        t_interp = np.interp(v_grid, u_sorted, t_sorted)
-                        step_t_interp = np.interp(v_grid, u_sorted, step_t_sorted)
+                            try:
+                                from scipy.interpolate import interp1d
+                                q_interp = interp1d(u_sorted, q_sorted, kind='linear', fill_value="extrapolate")(v_grid)
+                                t_interp = interp1d(u_sorted, t_sorted, kind='linear', fill_value="extrapolate")(v_grid)
+                                step_t_interp = interp1d(u_sorted, step_t_sorted, kind='linear', fill_value="extrapolate")(v_grid)
+                            except Exception:
+                                q_interp = np.interp(v_grid, u_sorted, q_sorted)
+                                t_interp = np.interp(v_grid, u_sorted, t_sorted)
+                                step_t_interp = np.interp(v_grid, u_sorted, step_t_sorted)
 
-                    dq = np.gradient(q_interp)
-                    dv = np.gradient(v_grid)
+                            dq_d = np.gradient(q_interp)
+                            dv_d = np.gradient(v_grid)
 
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        if plot_type == 'dqdv':
-                            y_raw = dq / dv
-                        else:  # dvdq
-                            y_raw = dv / dq
-                    y_clean = np.nan_to_num(y_raw, nan=0.0, posinf=0.0, neginf=0.0)
+                            with np.errstate(divide='ignore', invalid='ignore'):
+                                y_raw_d = (dq_d / dv_d) if plot_type == 'dqdv' else (dv_d / dq_d)
+                            y_clean_d = np.nan_to_num(y_raw_d, nan=0.0, posinf=0.0, neginf=0.0)
+                            y_plot_d = self.apply_filtering(y_clean_d, filter_type, w_size, p_order)
 
-                    # 4. 滤波处理 (支持 SG, 移动平均, 中值, 高斯, 指数平滑)
-                    y_plot = self.apply_filtering(y_clean, filter_type, w_size, p_order)
+                            x_choice_str = str(self.compare_x_var.get()).strip()
+                            x_choice_lower = x_choice_str.lower()
+                            if '容量' in x_choice_str or 'capacity' in x_choice_lower:
+                                x_plot_d = q_interp
+                                x_label = "Capacity / Ah"
+                            elif '工步时间' in x_choice_str or 'steptime' in x_choice_lower or 'step_time' in x_choice_lower:
+                                x_plot_d = step_t_interp
+                                x_label = "Step Time / s"
+                            elif '时间' in x_choice_str or 'time' in x_choice_lower:
+                                x_plot_d = t_interp
+                                x_label = "Time / s"
+                            elif '电压' in x_choice_str or 'voltage' in x_choice_lower or x_choice_str == voltage_col_name:
+                                x_plot_d = v_grid
+                                x_label = "Voltage / V"
+                            elif x_choice_str in df_c_sub.columns:
+                                col_raw = pd.to_numeric(df_c_sub[x_choice_str], errors='coerce').values[valid_mask][unique_indices]
+                                col_sorted = col_raw[sort_idx]
+                                try:
+                                    x_plot_d = interp1d(u_sorted, col_sorted, kind='linear', fill_value="extrapolate")(v_grid)
+                                except Exception:
+                                    x_plot_d = np.interp(v_grid, u_sorted, col_sorted)
+                                x_label = x_choice_str
+                            else:
+                                x_plot_d = v_grid if plot_type == 'dqdv' else q_interp
+                                x_label = "Voltage / V" if plot_type == 'dqdv' else "Capacity / Ah"
+                            
+                            lbl_d = f"Cycle {c} (去重)" if dqdv_mode == "对比" else f"Cycle {c}"
+                            curves_to_plot.append((x_plot_d, y_plot_d, lbl_d, '-' if dqdv_mode == '去重' else '--'))
 
-                    # 5. X 轴灵活响应“循环X轴”下拉框
-                    x_choice = self.compare_x_var.get()
-                    if x_choice in ["容量", "容量（计算）"]:
-                        x_plot = q_interp
-                        x_label = "Capacity / Ah"
-                    elif x_choice in ["循环时间", "循环时间（计算）"]:
-                        x_plot = t_interp
-                        x_label = "Time / s"
-                    elif x_choice in ["工步时间", "工步时间（计算）", "工步时间(s)"]:
-                        x_plot = step_t_interp
-                        x_label = "Step Time / s"
-                    elif x_choice == voltage_col_name or x_choice == "电压":
-                        x_plot = v_grid
-                        x_label = f"Voltage / V ({voltage_col_name})"
-                    else:
-                        if plot_type == 'dqdv':
-                            x_plot = v_grid
-                            x_label = f"Voltage / V ({voltage_col_name})"
-                        else:
-                            x_plot = q_interp
+                    # B. 计算 "原始" (直接在原始数据点上求导)
+                    if dqdv_mode in ["原始", "对比"]:
+                        dq_r = np.gradient(q_valid)
+                        dv_r = np.gradient(u_valid)
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            y_raw_r = (dq_r / dv_r) if plot_type == 'dqdv' else (dv_r / dq_r)
+                        y_clean_r = np.nan_to_num(y_raw_r, nan=0.0, posinf=0.0, neginf=0.0)
+                        y_plot_r = self.apply_filtering(y_clean_r, filter_type, w_size, p_order)
+
+                        x_choice_str = str(self.compare_x_var.get()).strip()
+                        x_choice_lower = x_choice_str.lower()
+                        if '容量' in x_choice_str or 'capacity' in x_choice_lower:
+                            x_plot_r = q_valid
                             x_label = "Capacity / Ah"
-
-                    # 记录统计特征 (均值/方差)
-                    stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
-                    if stat_type == "均值":
-                        stat_cycles.append(c)
-                        stat_values.append(float(np.mean(y_plot)))
-                    elif stat_type == "方差":
-                        stat_cycles.append(c)
-                        stat_values.append(float(np.var(y_plot)))
+                        elif '工步时间' in x_choice_str or 'steptime' in x_choice_lower or 'step_time' in x_choice_lower:
+                            x_plot_r = step_t_valid_sub
+                            x_label = "Step Time / s"
+                        elif '时间' in x_choice_str or 'time' in x_choice_lower:
+                            x_plot_r = t_valid_sub
+                            x_label = "Time / s"
+                        else:
+                            x_plot_r = u_valid
+                            x_label = "Voltage / V"
+                        
+                        lbl_r = f"Cycle {c} (原始)" if dqdv_mode == "对比" else f"Cycle {c}"
+                        curves_to_plot.append((x_plot_r, y_plot_r, lbl_r, '-'))
 
                     color_map = self.color_schemes_dict[self.color_schemes[0].get()]
-                    color = plt.cm.tab10(idx % 10) if color_map is None else color_map(idx % color_map.N)
-                    
+                    N = getattr(color_map, 'N', 25) if color_map is not None else 25
                     style_props = self.get_line_and_marker_props(0, idx)
-                    line = self.ax.plot(x_plot, y_plot,
-                                      label=f"Cycle {c}",
-                                      linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
-                                      color=color,
-                                      **style_props)
-                    all_lines.extend(line)
-                    all_labels.append(f"Cycle {c}")
-                    all_y_plots.extend(y_plot)
-                    all_x_points.extend(x_plot)
+
+                    for sub_idx, (x_plot_i, y_plot_i, lbl_i, ls_i) in enumerate(curves_to_plot):
+                        # 记录统计特征 (均值/方差)
+                        stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
+                        if stat_type == "均值":
+                            stat_cycles.append(c)
+                            stat_values.append(float(np.mean(y_plot_i)))
+                        elif stat_type == "方差":
+                            stat_cycles.append(c)
+                            stat_values.append(float(np.var(y_plot_i)))
+
+                        # 对比模式下：第 idx 选中圈占用 2*idx 和 2*idx+1 两个预设颜色
+                        if dqdv_mode == "对比":
+                            color_idx = (2 * idx + sub_idx) % N
+                        else:
+                            color_idx = idx % N
+
+                        if color_map is None:
+                            color = plt.cm.tab10(color_idx % 10)
+                        else:
+                            color = color_map(color_idx % N)
+
+                        props = style_props.copy()
+                        if dqdv_mode == "对比":
+                            props['linestyle'] = ls_i
+
+                        line = self.ax.plot(x_plot_i, y_plot_i,
+                                          label=lbl_i,
+                                          linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
+                                          color=color,
+                                          **props)
+                        all_lines.extend(line)
+                        all_labels.append(lbl_i)
+                        all_y_plots.extend(y_plot_i)
+                        all_x_points.extend(x_plot_i)
                 else:
                     df_c_plot = df_c.copy()
                     df_c_plot['Capacity'] = cap_vals
@@ -693,7 +750,7 @@ class PlotEngineMixin:
                     y_label_str = user_dqdv_title
                 else:
                     y_label_str = "dQ/dV / (Ah/V)" if plot_type == 'dqdv' else "dV/dQ / (V/Ah)"
-                self.ax.set_ylabel(y_label_str, fontsize=font_size, fontfamily=font_family, color='black', labelpad=10)
+                self.ax.set_ylabel(y_label_str, fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                 
                 # 绘制副 Y 轴统计折线 (均值 / 方差 点线图)
                 stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
@@ -707,7 +764,7 @@ class PlotEngineMixin:
                     line_stat = ax_stat.plot(stat_cycles, stat_values, 'o--', 
                                              color='crimson', linewidth=1.8, markersize=6, 
                                              label=label_str)
-                    ax_stat.set_ylabel(label_str, fontsize=font_size, fontfamily=font_family, color='crimson', labelpad=10)
+                    ax_stat.set_ylabel(label_str, fontsize=font_size, fontfamily=font_family, color='crimson', labelpad=label_pad_val)
                     ax_stat.tick_params(axis='y', colors='crimson', labelsize=font_size)
                     all_lines.extend(line_stat)
                     all_labels.append(label_str)
@@ -763,9 +820,9 @@ class PlotEngineMixin:
                 # Check user title for comparative regular plot (which is now called "循环Y轴")
                 user_y_title = self.dqdv_title_var.get().strip()
                 if user_y_title:
-                    self.ax.set_ylabel(user_y_title, fontsize=font_size, fontfamily=font_family, color='black', labelpad=10)
+                    self.ax.set_ylabel(user_y_title, fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                 else:
-                    self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=10)
+                    self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                 
                 # Check user limits for comparative regular plot (which is now called "循环Y轴")
                 dqdv_min_str = self.dqdv_min_var.get().strip()
@@ -806,7 +863,7 @@ class PlotEngineMixin:
                         pass
 
                 if y2_data and ax2:
-                    ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
+                    ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[1]['min'].get())
                         ymax = float(self.y_settings[1]['max'].get())
@@ -816,7 +873,7 @@ class PlotEngineMixin:
                         pass
 
                 if y3_data and ax3:
-                    ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
+                    ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[2]['min'].get())
                         ymax = float(self.y_settings[2]['max'].get())
@@ -1086,6 +1143,7 @@ class PlotEngineMixin:
                     self.logger.error(f"数据降采样失败: {str(e)}")
                 
             self.setup_mpl_font(self.font_family.get())
+            label_pad_val = float(self.safe_float_convert(self.adv_label_pad_var.get(), 10.0)) if hasattr(self, 'adv_label_pad_var') else 10.0
             bg_choice = self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else "默认(白色)"
             current_text_color = '#ffffff' if "黑" in bg_choice else ('#212529' if "灰" in bg_choice else '#000000')
 
@@ -1171,7 +1229,7 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=10)
+                self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[0]['min'].get())
                     ymax = float(self.y_settings[0]['max'].get())
@@ -1208,7 +1266,7 @@ class PlotEngineMixin:
                     y2_labels_temp.append(cleaned_label)
                 all_lines.extend(y2_lines_temp)
                 all_labels.extend(y2_labels_temp)
-                ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
+                ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[1]['min'].get())
                     ymax = float(self.y_settings[1]['max'].get())
@@ -1234,7 +1292,7 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=0)
+                ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[2]['min'].get())
                     ymax = float(self.y_settings[2]['max'].get())
@@ -1369,8 +1427,8 @@ class PlotEngineMixin:
                 right_margin_px = max(y1_min_px, int(font_size * y1_mult))
                 max_right_percent = y1_max_right_pct
                 
-            left_margin = max(left_min_pct, min(left_margin_px / fig_width_px, 0.15))
-            right_margin = max(0.6, min(1.0 - (right_margin_px / fig_width_px), max_right_percent))
+            left_margin = max(left_min_pct, left_margin_px / fig_width_px)
+            right_margin = max(0.3, min(1.0 - (right_margin_px / fig_width_px), max_right_percent))
             return right_margin, left_margin
         except Exception:
             y3_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.83)) if hasattr(self, 'adv_y3_max_right_pct') else 0.83

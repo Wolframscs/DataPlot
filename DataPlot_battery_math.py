@@ -195,12 +195,14 @@ class BatteryMathMixin:
             try:
                 start = int(parts[0])
                 end_val = parts[1].lower()
+                step = int(parts[2])
                 if end_val == 'max':
                     end = int(max_cycle)
+                    return list(range(start, end + 1, step))
                 else:
                     end = int(end_val)
-                step = int(parts[2])
-                return list(range(start, end + 1, step))
+                    if step <= abs(end - start) and step > 0:
+                        return list(range(start, end + 1, step))
             except ValueError:
                 pass
         

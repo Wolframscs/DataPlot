@@ -51,6 +51,7 @@ class SettingsMixin:
             'adv_left_margin_mult': self.adv_left_margin_mult.get(),
             'adv_left_margin_min_px': self.adv_left_margin_min_px.get(),
             'adv_left_margin_min_pct': self.adv_left_margin_min_pct.get(),
+            'adv_label_pad': self.adv_label_pad_var.get() if hasattr(self, 'adv_label_pad_var') else '10',
             
             'adv_y3_margin_mult': self.adv_y3_margin_mult.get(),
             'adv_y3_margin_min_px': self.adv_y3_margin_min_px.get(),
@@ -79,6 +80,7 @@ class SettingsMixin:
             'dqdv_vmax': self.dqdv_vmax_var.get() if hasattr(self, 'dqdv_vmax_var') else '',
             'dqdv_npts': self.dqdv_npts_var.get() if hasattr(self, 'dqdv_npts_var') else '100',
             'dqdv_stat': self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else 'None',
+            'dqdv_mode': self.dqdv_mode_var.get() if hasattr(self, 'dqdv_mode_var') else '去重',
             'filter_type': self.filter_type_var.get() if hasattr(self, 'filter_type_var') else '无',
             
             # Panel font, background and layout width/height configurations
@@ -146,6 +148,8 @@ class SettingsMixin:
                     self.dqdv_npts_var.set(settings.get('dqdv_npts', '100'))
                 if hasattr(self, 'dqdv_stat_var'):
                     self.dqdv_stat_var.set(settings.get('dqdv_stat', 'None'))
+                if hasattr(self, 'dqdv_mode_var'):
+                    self.dqdv_mode_var.set(settings.get('dqdv_mode', '去重'))
                 if hasattr(self, 'filter_type_var'):
                     self.filter_type_var.set(settings.get('filter_type', '无'))
                 
@@ -172,6 +176,8 @@ class SettingsMixin:
                 self.adv_left_margin_mult.set(settings.get('adv_left_margin_mult', '4.5'))
                 self.adv_left_margin_min_px.set(settings.get('adv_left_margin_min_px', '80'))
                 self.adv_left_margin_min_pct.set(settings.get('adv_left_margin_min_pct', '0.08'))
+                if hasattr(self, 'adv_label_pad_var'):
+                    self.adv_label_pad_var.set(settings.get('adv_label_pad', '10'))
                 
                 self.adv_y3_margin_mult.set(settings.get('adv_y3_margin_mult', '9.5'))
                 self.adv_y3_margin_min_px.set(settings.get('adv_y3_margin_min_px', '170'))

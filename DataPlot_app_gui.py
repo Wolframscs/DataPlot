@@ -294,6 +294,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.dqdv_vmax_var = Var("")
         self.dqdv_npts_var = Var("100")
         self.dqdv_stat_var = Var("None")
+        self.dqdv_mode_var = Var("去重")
         self.voltage_scale_var = Var("1")
         self.current_scale_var = Var("1")
         self.x_axis = Var("")
@@ -320,6 +321,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.adv_left_margin_mult = Var("4.5")
         self.adv_left_margin_min_px = Var("80")
         self.adv_left_margin_min_pct = Var("0.08")
+        self.adv_label_pad_var = Var("10")
         
         self.adv_y3_margin_mult = Var("9.5")
         self.adv_y3_margin_min_px = Var("170")
@@ -802,6 +804,19 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             if checked:
                 val = "regular" if btn == self.radio_regular else "dqdv" if btn == self.radio_dqdv else "dvdq"
                 self.current_compare_type.set(val)
+                if val == "dqdv":
+                    v_col = self.voltage_col.get() if hasattr(self, 'voltage_col') and self.voltage_col.get() else "电压"
+                    for idx in range(self.compare_x_combo.count()):
+                        txt = self.compare_x_combo.itemText(idx)
+                        if "电压" in txt or "voltage" in txt.lower() or txt == v_col:
+                            self.compare_x_combo.setCurrentIndex(idx)
+                            break
+                elif val == "dvdq":
+                    for idx in range(self.compare_x_combo.count()):
+                        txt = self.compare_x_combo.itemText(idx)
+                        if "容量" in txt or "capacity" in txt.lower():
+                            self.compare_x_combo.setCurrentIndex(idx)
+                            break
                 self.on_compare_type_changed()
                 self.delayed_update()
         
@@ -848,11 +863,11 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         dqdv_grid_widget = QWidget()
         dqdv_grid_layout = QHBoxLayout(dqdv_grid_widget)
         dqdv_grid_layout.setContentsMargins(0, 0, 0, 0)
-        dqdv_grid_layout.setSpacing(3)
+        dqdv_grid_layout.setSpacing(4)
 
         dqdv_grid_layout.addWidget(QLabel("Vmin:"))
         self.dqdv_vmin_entry = QLineEdit()
-        self.dqdv_vmin_entry.setFixedWidth(45)
+        self.dqdv_vmin_entry.setFixedWidth(55)
         self.dqdv_vmin_entry.setPlaceholderText("默认")
         bind_lineedit(self.dqdv_vmin_entry, self.dqdv_vmin_var)
         self.dqdv_vmin_entry.returnPressed.connect(lambda: self.update_plot())
@@ -860,15 +875,23 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
 
         dqdv_grid_layout.addWidget(QLabel("Vmax:"))
         self.dqdv_vmax_entry = QLineEdit()
-        self.dqdv_vmax_entry.setFixedWidth(45)
+        self.dqdv_vmax_entry.setFixedWidth(55)
         self.dqdv_vmax_entry.setPlaceholderText("默认")
         bind_lineedit(self.dqdv_vmax_entry, self.dqdv_vmax_var)
         self.dqdv_vmax_entry.returnPressed.connect(lambda: self.update_plot())
         dqdv_grid_layout.addWidget(self.dqdv_vmax_entry)
 
         dqdv_grid_layout.addWidget(QLabel("采样点:"))
+        
+        self.dqdv_mode_combo = CustomComboBox()
+        self.dqdv_mode_combo.addItems(["去重", "原始", "对比"])
+        self.dqdv_mode_combo.setFixedWidth(60)
+        bind_combobox(self.dqdv_mode_combo, self.dqdv_mode_var)
+        self.dqdv_mode_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        dqdv_grid_layout.addWidget(self.dqdv_mode_combo)
+
         self.dqdv_npts_entry = QLineEdit()
-        self.dqdv_npts_entry.setFixedWidth(45)
+        self.dqdv_npts_entry.setFixedWidth(50)
         bind_lineedit(self.dqdv_npts_entry, self.dqdv_npts_var)
         self.dqdv_npts_entry.returnPressed.connect(lambda: self.update_plot())
         dqdv_grid_layout.addWidget(self.dqdv_npts_entry)
@@ -879,6 +902,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         bind_combobox(self.dqdv_stat_combo, self.dqdv_stat_var)
         self.dqdv_stat_combo.currentIndexChanged.connect(lambda: self.delayed_update())
         dqdv_grid_layout.addWidget(self.dqdv_stat_combo)
+        dqdv_grid_layout.addStretch()
 
         compare_grid.addWidget(QLabel("dQ/dV配置:"), 4, 0)
         compare_grid.addWidget(dqdv_grid_widget, 4, 1, 1, 5)
@@ -1356,7 +1380,14 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.canvas_bg_combo.addItems(["默认(白色)", "灰色", "黑色"])
         bind_combobox(self.canvas_bg_combo, self.canvas_bg_var)
         self.canvas_bg_var.trace_add('write', lambda *args: [self.apply_canvas_background(), self.update_plot()])
-        adv_grid.addWidget(self.canvas_bg_combo, 5, 3, 1, 3)
+        adv_grid.addWidget(self.canvas_bg_combo, 5, 3)
+
+        adv_grid.addWidget(QLabel("标题间距:"), 5, 4)
+        self.adv_label_pad_entry = QLineEdit()
+        bind_lineedit(self.adv_label_pad_entry, self.adv_label_pad_var)
+        self.adv_label_pad_entry.textChanged.connect(lambda: self.delayed_update())
+        self.adv_label_pad_entry.returnPressed.connect(lambda: self.update_plot())
+        adv_grid.addWidget(self.adv_label_pad_entry, 5, 5)
 
         # Row 6: Buttons Layout (默认设置 & 保存设置)
         btn_layout = QHBoxLayout()
@@ -2257,6 +2288,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.adv_left_margin_mult.set("4.5")
         self.adv_left_margin_min_px.set("80")
         self.adv_left_margin_min_pct.set("0.08")
+        self.adv_label_pad_var.set("10")
         
         self.adv_y3_margin_mult.set("9.5")
         self.adv_y3_margin_min_px.set("170")
