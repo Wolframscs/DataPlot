@@ -408,10 +408,10 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         screen = QApplication.primaryScreen()
         if screen:
             screen_geometry = screen.availableGeometry()
-            width = int(screen_geometry.width() * 0.75)
-            height = int(screen_geometry.height() * 0.70)
-            width = max(1200, min(width, int(screen_geometry.width() * 0.90)))
-            height = max(580, min(height, int(screen_geometry.height() * 0.75)))
+            width = int(screen_geometry.width() * 0.85)
+            height = int(screen_geometry.height() * 0.85)
+            width = max(1200, min(width, int(screen_geometry.width() * 0.95)))
+            height = max(580, min(height, int(screen_geometry.height() * 0.85)))
             self.resize(width, height)
         else:
             self.resize(1280, 680)
@@ -2237,15 +2237,15 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             pass
 
     def center_on_screen(self):
-        """将主窗口中心与当前显示器屏幕中心对齐，限制窗口高度不超过屏幕可用高度的 75%"""
+        """将主窗口中心与当前显示器屏幕中心对齐，限制窗口高度不超过屏幕可用高度的 85%"""
         try:
             screen = QApplication.primaryScreen()
             if screen:
                 geo = screen.availableGeometry()
                 win_geo = self.frameGeometry()
                 
-                max_allowed_h = int(geo.height() * 0.75)
-                max_allowed_w = int(geo.width() * 0.90)
+                max_allowed_h = int(geo.height() * 0.85)
+                max_allowed_w = int(geo.width() * 0.95)
                 
                 if win_geo.height() > max_allowed_h or win_geo.width() > max_allowed_w:
                     new_w = min(win_geo.width(), max_allowed_w)
@@ -2272,9 +2272,9 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             screen = QApplication.primaryScreen()
             if screen:
                 geo = screen.availableGeometry()
-                max_h = int(geo.height() * 0.75)
+                max_h = int(geo.height() * 0.85)
                 ch = min(ch, max_h - 80)
-                total_w = min(pw + cw + self.splitter.handleWidth() + 20, int(geo.width() * 0.90))
+                total_w = min(pw + cw + self.splitter.handleWidth() + 20, int(geo.width() * 0.95))
                 total_h = min(ch + 80, max_h)
             else:
                 total_w = pw + cw + 20
