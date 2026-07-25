@@ -1,4 +1,5 @@
 import json
+import os
 
 class SettingsMixin:
     def save_settings(self):
@@ -86,9 +87,10 @@ class SettingsMixin:
             # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
             'panel_font_size': self.panel_font_size.get() if hasattr(self, 'panel_font_size') else '13',
-            'panel_width': max(200, int(getattr(self, '_saved_panel_width', 520))),
-            'canvas_width': max(300, int(getattr(self, '_saved_canvas_width', 700))),
-            'canvas_height': min(700, max(300, int(getattr(self, '_saved_canvas_height', 580)))),
+            'panel_width': max(200, int(getattr(self, '_saved_panel_width', 560))),
+            'canvas_width': max(300, int(getattr(self, '_saved_canvas_width', 1000))),
+            'canvas_height': max(300, int(getattr(self, '_saved_canvas_height', 800))),
+            'win_height_pct': self.win_height_pct_var.get() if hasattr(self, 'win_height_pct_var') else '0.85',
             'canvas_bg': self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else '默认(白色)',
             'last_browse_dir': browse_dir
         }
@@ -202,19 +204,21 @@ class SettingsMixin:
                 if hasattr(self, 'canvas_bg_var'):
                     self.canvas_bg_var.set(settings.get('canvas_bg', '默认(白色)'))
 
-                pw = int(settings.get('panel_width', 520))
-                cw = int(settings.get('canvas_width', 700))
-                ch = int(settings.get('canvas_height', 580))
+                pw = int(settings.get('panel_width', 560))
+                cw = int(settings.get('canvas_width', 1000))
+                ch = int(settings.get('canvas_height', 800))
                 if pw < 200:
-                    pw = 520
+                    pw = 560
                 if cw < 300:
-                    cw = 700
-                if ch < 300 or ch > 700:
-                    ch = 580
+                    cw = 1000
+                if ch < 300:
+                    ch = 800
                 self._saved_panel_width = pw
                 self._saved_canvas_width = cw
                 self._saved_canvas_height = ch
                 self._last_browse_dir = settings.get('last_browse_dir', '')
+                if hasattr(self, 'win_height_pct_var'):
+                    self.win_height_pct_var.set(settings.get('win_height_pct', '0.85'))
                 if hasattr(self, 'panel_width_var'):
                     self.panel_width_var.set(str(pw))
                 if hasattr(self, 'canvas_width_var'):

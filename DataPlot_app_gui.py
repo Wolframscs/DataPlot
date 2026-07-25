@@ -208,23 +208,6 @@ class CanvasResizeFilter(QObject):
         self.gui = gui
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Resize:
-            if hasattr(self.gui, 'plot_display_widget') and obj == self.gui.plot_display_widget:
-                if getattr(self.gui, '_is_plotting', False) or getattr(self.gui, '_is_syncing_splitter', False) or getattr(self.gui, '_is_loading_settings', False):
-                    return super().eventFilter(obj, event)
-                w = event.size().width()
-                saved = getattr(self.gui, '_saved_canvas_width', 0)
-                if w > 50 and abs(w - saved) > 2:
-                    self.gui._saved_canvas_width = w
-                    if hasattr(self.gui, 'canvas_width_var'):
-                        self.gui.canvas_width_var.set(str(w))
-                    self.gui._is_syncing_splitter = True
-                    try:
-                        if hasattr(self.gui, 'canvas_width_entry') and self.gui.canvas_width_entry:
-                            if self.gui.canvas_width_entry.text() != str(w):
-                                self.gui.canvas_width_entry.setText(str(w))
-                    finally:
-                        self.gui._is_syncing_splitter = False
         return super().eventFilter(obj, event)
 
 class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
@@ -345,6 +328,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.panel_font_size = Var("13")
         self.panel_width_var = Var("560")
         self.canvas_width_var = Var("1000")
+        self.win_height_pct_var = Var("0.85")
         self.canvas_bg_var = Var("默认(白色)")
         
         # Advanced margin variables
@@ -1419,7 +1403,15 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.adv_label_pad_entry.returnPressed.connect(lambda: self.update_plot())
         adv_grid.addWidget(self.adv_label_pad_entry, 5, 5)
 
-        # Row 6: Buttons Layout (默认设置 & 保存设置)
+        # Row 6: Window Height Ratio
+        adv_grid.addWidget(QLabel("窗口高度比例:"), 6, 0)
+        self.win_height_pct_entry = QLineEdit()
+        bind_lineedit(self.win_height_pct_entry, self.win_height_pct_var)
+        self.win_height_pct_entry.editingFinished.connect(lambda: self.apply_loaded_panel_and_canvas_width())
+        self.win_height_pct_entry.returnPressed.connect(lambda: self.apply_loaded_panel_and_canvas_width())
+        adv_grid.addWidget(self.win_height_pct_entry, 6, 1)
+
+        # Row 7: Buttons Layout (默认设置 & 保存设置)
         btn_layout = QHBoxLayout()
         self.adv_reset_btn = QPushButton("默认设置")
         self.adv_reset_btn.clicked.connect(self.reset_advanced_settings)
@@ -1429,7 +1421,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.adv_save_btn.clicked.connect(self.save_advanced_settings)
         btn_layout.addWidget(self.adv_save_btn)
 
-        adv_grid.addLayout(btn_layout, 6, 0, 1, 6)
+        adv_grid.addLayout(btn_layout, 7, 0, 1, 6)
         
         adv_box_lay = QVBoxLayout(self.adv_groupbox)
         adv_box_lay.setContentsMargins(10, 0, 10, 10)
@@ -2023,10 +2015,6 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                     # 确保 stretch factor 正确（中间拖拽后可能被改变）
                     self.splitter.setStretchFactor(0, 0)
                     self.splitter.setStretchFactor(1, 1)
-                    sizes = self.splitter.sizes()
-                    if sizes and len(sizes) >= 2:
-                        self._saved_panel_width = sizes[0]
-                        self._saved_canvas_width = sizes[1]
 
                 # 同步显示
                 self._sync_size_display()
@@ -2237,19 +2225,21 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             pass
 
     def center_on_screen(self):
-        """将主窗口中心与当前显示器屏幕中心对齐，限制窗口高度不超过屏幕可用高度的 85%"""
+        """将主窗口中心与当前显示器屏幕中心对齐，高度按窗口高度比例自适应"""
         try:
             screen = QApplication.primaryScreen()
             if screen:
                 geo = screen.availableGeometry()
                 win_geo = self.frameGeometry()
                 
-                max_allowed_h = int(geo.height() * 0.85)
+                pct = self.safe_float_convert(self.win_height_pct_var.get() if hasattr(self, 'win_height_pct_var') else '0.85', 0.85)
+                target_h = int(geo.height() * pct)
                 max_allowed_w = int(geo.width() * 0.95)
                 
-                if win_geo.height() > max_allowed_h or win_geo.width() > max_allowed_w:
-                    new_w = min(win_geo.width(), max_allowed_w)
-                    new_h = min(win_geo.height(), max_allowed_h)
+                new_w = min(win_geo.width(), max_allowed_w)
+                new_h = target_h
+                
+                if not self.isMaximized():
                     self.resize(new_w, new_h)
                     win_geo = self.frameGeometry()
 
@@ -2261,24 +2251,22 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                 self.logger.error(f"窗口居中失败: {str(e)}")
 
     def apply_loaded_panel_and_canvas_width(self):
-        """加载 settings.json 后：应用保存的面板宽度、画布宽度及画布高度到主窗口及 splitter，并居中屏幕"""
+        """加载 settings.json 后：应用保存的面板宽度、画布宽度及窗口高度比例，并居中屏幕"""
         if not hasattr(self, 'splitter') or not self.splitter:
             return
-        pw = int(getattr(self, '_saved_panel_width', 520))
-        cw = int(getattr(self, '_saved_canvas_width', 700))
-        ch = int(getattr(self, '_saved_canvas_height', 580))
+        pw = int(getattr(self, '_saved_panel_width', 560))
+        cw = int(getattr(self, '_saved_canvas_width', 1000))
+        pct = self.safe_float_convert(self.win_height_pct_var.get() if hasattr(self, 'win_height_pct_var') else '0.85', 0.85)
         self._is_syncing_splitter = True
         try:
             screen = QApplication.primaryScreen()
             if screen:
                 geo = screen.availableGeometry()
-                max_h = int(geo.height() * 0.85)
-                ch = min(ch, max_h - 80)
                 total_w = min(pw + cw + self.splitter.handleWidth() + 20, int(geo.width() * 0.95))
-                total_h = min(ch + 80, max_h)
+                total_h = int(geo.height() * pct)
             else:
                 total_w = pw + cw + 20
-                total_h = min(ch + 80, 680)
+                total_h = 750
 
             if not self.isMaximized():
                 self.resize(total_w, total_h)
@@ -2353,6 +2341,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         self.panel_font_family.set("Microsoft YaHei")
         self.panel_font_size.set("13")
+        self.win_height_pct_var.set("0.85")
         self.canvas_bg_var.set("默认(白色)")
         
         def_panel_w = 560
