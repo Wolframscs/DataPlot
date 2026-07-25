@@ -408,14 +408,14 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         screen = QApplication.primaryScreen()
         if screen:
             screen_geometry = screen.availableGeometry()
-            width = int(screen_geometry.width() * 0.85)
-            height = int(screen_geometry.height() * 0.85)
-            width = max(1600, min(width, screen_geometry.width()))
-            height = max(900, min(height, screen_geometry.height()))
+            width = int(screen_geometry.width() * 0.75)
+            height = int(screen_geometry.height() * 0.70)
+            width = max(1200, min(width, int(screen_geometry.width() * 0.90)))
+            height = max(580, min(height, int(screen_geometry.height() * 0.75)))
             self.resize(width, height)
         else:
-            self.resize(1600, 900)
-        self.setMinimumSize(1200, 800)
+            self.resize(1280, 680)
+        self.setMinimumSize(950, 500)
         
         self.setStyleSheet("""
             QWidget {
@@ -1029,7 +1029,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             
             listbox = CustomListWidget()
             listbox.bind('<<ListboxSelect>>', self.on_selection_change)
-            listbox.setMinimumHeight(150)
+            listbox.setMinimumHeight(100)
             listbox.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
             pane_lay.addWidget(listbox)
             self.y_listboxes.append(listbox)
@@ -1483,10 +1483,10 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.current_axes = {'y1': self.ax}
         
         splitter.addWidget(plot_display_widget)
-        splitter.setSizes([560, 1000])   # Left panel width 560, right canvas width 1000
+        splitter.setSizes([520, 700])   # Left panel width 520, right canvas width 700
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        self.resize(1600, 900)
+        self.resize(1280, 680)
 
     def check_queue(self):
         """检查消息队列以在主线程中安全地更新 UI"""
@@ -2237,12 +2237,22 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             pass
 
     def center_on_screen(self):
-        """将主窗口中心与当前显示器屏幕中心对齐"""
+        """将主窗口中心与当前显示器屏幕中心对齐，限制窗口高度不超过屏幕可用高度的 75%"""
         try:
             screen = QApplication.primaryScreen()
             if screen:
                 geo = screen.availableGeometry()
                 win_geo = self.frameGeometry()
+                
+                max_allowed_h = int(geo.height() * 0.75)
+                max_allowed_w = int(geo.width() * 0.90)
+                
+                if win_geo.height() > max_allowed_h or win_geo.width() > max_allowed_w:
+                    new_w = min(win_geo.width(), max_allowed_w)
+                    new_h = min(win_geo.height(), max_allowed_h)
+                    self.resize(new_w, new_h)
+                    win_geo = self.frameGeometry()
+
                 center_x = geo.left() + (geo.width() - win_geo.width()) // 2
                 center_y = geo.top() + (geo.height() - win_geo.height()) // 2
                 self.move(max(geo.left(), center_x), max(geo.top(), center_y))
@@ -2254,13 +2264,22 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         """加载 settings.json 后：应用保存的面板宽度、画布宽度及画布高度到主窗口及 splitter，并居中屏幕"""
         if not hasattr(self, 'splitter') or not self.splitter:
             return
-        pw = int(getattr(self, '_saved_panel_width', 560))
-        cw = int(getattr(self, '_saved_canvas_width', 1000))
-        ch = int(getattr(self, '_saved_canvas_height', 800))
+        pw = int(getattr(self, '_saved_panel_width', 520))
+        cw = int(getattr(self, '_saved_canvas_width', 700))
+        ch = int(getattr(self, '_saved_canvas_height', 580))
         self._is_syncing_splitter = True
         try:
-            total_w = pw + cw + self.splitter.handleWidth() + 20
-            total_h = ch + 60
+            screen = QApplication.primaryScreen()
+            if screen:
+                geo = screen.availableGeometry()
+                max_h = int(geo.height() * 0.75)
+                ch = min(ch, max_h - 80)
+                total_w = min(pw + cw + self.splitter.handleWidth() + 20, int(geo.width() * 0.90))
+                total_h = min(ch + 80, max_h)
+            else:
+                total_w = pw + cw + 20
+                total_h = min(ch + 80, 680)
+
             if not self.isMaximized():
                 self.resize(total_w, total_h)
             self.splitter.setSizes([pw, cw])
