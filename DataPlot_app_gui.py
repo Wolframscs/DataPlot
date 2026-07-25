@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFormLayout, QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton,
     QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QTextEdit, QMessageBox, QFileDialog,
-    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu
+    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu, QApplication
 )
 from PySide6.QtCore import Qt, QTimer, Slot, QEvent, QObject
 from PySide6.QtGui import QIcon, QFont

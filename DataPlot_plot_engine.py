@@ -1478,6 +1478,7 @@ class PlotEngineMixin:
                 
         def do_update():
             try:
+                font_family = self.font_family.get()
                 legend_y = self.safe_float_convert(self.legend_y.get(), 1.02)
                 font_size = self.safe_float_convert(self.font_size.get(), 18.0)
                 try:
