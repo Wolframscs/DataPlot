@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFormLayout, QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton,
     QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QTextEdit, QMessageBox, QFileDialog,
-    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout
+    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu
 )
 from PySide6.QtCore import Qt, QTimer, Slot, QEvent, QObject
 from PySide6.QtGui import QIcon, QFont
@@ -102,8 +102,38 @@ class CustomListWidget(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self._callbacks = []
         self.itemSelectionChanged.connect(self._on_selection_changed)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            item = self.itemAt(event.pos())
+            if item:
+                if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                    item.setSelected(not item.isSelected())
+                    self._on_selection_changed()
+                    return
+        super().mousePressEvent(event)
+
+    def _show_context_menu(self, pos):
+        item = self.itemAt(pos)
+        menu = QMenu(self)
+        if item and item.isSelected():
+            action_deselect = menu.addAction("✖ 取消选择此项")
+            action_deselect.triggered.connect(lambda: (item.setSelected(False), self._on_selection_changed()))
+        action_invert = menu.addAction("🔄 反向选择")
+        action_invert.triggered.connect(self._invert_selection)
+        action_clear = menu.addAction("🗑 清空当前列表")
+        action_clear.triggered.connect(self.clearSelection)
+        menu.exec(self.mapToGlobal(pos))
+
+    def _invert_selection(self):
+        for i in range(self.count()):
+            item = self.item(i)
+            item.setSelected(not item.isSelected())
+        self._on_selection_changed()
 
     def bind(self, event, callback):
         if event == '<<ListboxSelect>>':
