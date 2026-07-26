@@ -3,12 +3,8 @@ import os
 
 class SettingsMixin:
     def save_settings(self):
-        """保存当前设置到 JSON 文件"""
-        if hasattr(self, 'plot_display_widget') and self.plot_display_widget:
-            h_val = self.plot_display_widget.height()
-            if h_val >= 200:
-                self._saved_canvas_height = h_val
-        
+        """保存当前设置到 JSON 文件（不更新 panel_width/canvas_width/canvas_height，
+        这三个尺寸只有点击【保存设置】按钮时通过 save_advanced_settings 更新）"""
         browse_dir = getattr(self, '_last_browse_dir', '')
         if not browse_dir and hasattr(self, 'file_path') and self.file_path.get():
             fp = self.file_path.get()
@@ -18,6 +14,28 @@ class SettingsMixin:
                 browse_dir = os.path.dirname(fp)
         if not browse_dir:
             browse_dir = os.path.abspath(".")
+
+        # 读取现有 settings.json 中保存的布局尺寸，默认保留不变
+        existing_pw, existing_cw = 560, 1000
+        try:
+            with open('settings.json', 'r', encoding='utf-8') as f:
+                existing = json.load(f)
+                existing_pw = existing.get('panel_width', 560)
+                existing_cw = existing.get('canvas_width', 1000)
+        except Exception:
+            pass
+
+        # 只有 save_advanced_settings 设置了此标志，才用当前内存值覆盖布局尺寸
+        if getattr(self, '_update_layout_on_next_save', False):
+            try:
+                existing_pw = max(200, int(getattr(self, '_saved_panel_width', existing_pw)))
+            except Exception:
+                pass
+            try:
+                existing_cw = max(300, int(getattr(self, '_saved_canvas_width', existing_cw)))
+            except Exception:
+                pass
+            self._update_layout_on_next_save = False
 
         settings = {
             'font_family': self.font_family.get(),
@@ -87,9 +105,8 @@ class SettingsMixin:
             # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
             'panel_font_size': self.panel_font_size.get() if hasattr(self, 'panel_font_size') else '13',
-            'panel_width': max(200, int(getattr(self, '_saved_panel_width', 560))),
-            'canvas_width': max(300, int(getattr(self, '_saved_canvas_width', 1000))),
-            'canvas_height': max(300, int(getattr(self, '_saved_canvas_height', 800))),
+            'panel_width': existing_pw,
+            'canvas_width': existing_cw,
             'win_height_pct': self.win_height_pct_var.get() if hasattr(self, 'win_height_pct_var') else '0.85',
             'canvas_bg': self.canvas_bg_var.get() if hasattr(self, 'canvas_bg_var') else '默认(白色)',
             'last_browse_dir': browse_dir
@@ -206,16 +223,12 @@ class SettingsMixin:
 
                 pw = int(settings.get('panel_width', 560))
                 cw = int(settings.get('canvas_width', 1000))
-                ch = int(settings.get('canvas_height', 800))
                 if pw < 200:
                     pw = 560
                 if cw < 300:
                     cw = 1000
-                if ch < 300:
-                    ch = 800
                 self._saved_panel_width = pw
                 self._saved_canvas_width = cw
-                self._saved_canvas_height = ch
                 self._last_browse_dir = settings.get('last_browse_dir', '')
                 if hasattr(self, 'win_height_pct_var'):
                     self.win_height_pct_var.set(settings.get('win_height_pct', '0.85'))
