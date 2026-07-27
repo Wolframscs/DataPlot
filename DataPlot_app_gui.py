@@ -1633,6 +1633,20 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         else:
             self.dqdv_title_var.set("")
 
+        is_dqdv = (ctype in ['dqdv', 'dvdq']) and (self.file_type.get() == "battery" and bool(self.cycle_compare_var.get()))
+        was_dqdv = getattr(self, '_in_dqdv_mode', False)
+
+        if is_dqdv and not was_dqdv:
+            # 刚进入 dQ/dV 或 dV/dQ 模式：备份当前的 Y2 右边距默认值，并自动调整为 0.87
+            self._prev_adv_y2_max_right_pct = self.adv_y2_max_right_pct.get()
+            self.adv_y2_max_right_pct.set("0.87")
+            self._in_dqdv_mode = True
+        elif not is_dqdv and was_dqdv:
+            # 退出 dQ/dV 模式：自动恢复之前的默认值
+            prev_val = getattr(self, '_prev_adv_y2_max_right_pct', "0.9")
+            self.adv_y2_max_right_pct.set(prev_val)
+            self._in_dqdv_mode = False
+
     def on_cycle_col_changed(self, event=None):
         if self.result_df is not None and hasattr(self, 'cycle_col_combo'):
             cycle_col_name = self.cycle_col_combo.currentText()

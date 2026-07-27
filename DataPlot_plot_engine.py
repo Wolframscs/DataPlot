@@ -180,6 +180,8 @@ class PlotEngineMixin:
             self._in_cycle_compare_mode = False
 
         self.update_listboxes()
+        if hasattr(self, 'on_compare_type_changed'):
+            self.on_compare_type_changed()
 
         self.update_plot(force=True)
 
@@ -757,8 +759,9 @@ class PlotEngineMixin:
                 stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
                 if stat_type in ["均值", "方差"] and len(stat_cycles) > 0:
                     ax_inter = self.ax.twinx()
+                    ax_inter.yaxis.set_visible(False)
+                    
                     ax_stat = ax_inter.twiny()
-                    ax_inter.axis('off')
                     self.ax_stat_ref = ax_stat
                     ax_stat.spines['right'].set_position(('outward', 0))
                     set_axis_style(ax_stat)
@@ -767,6 +770,7 @@ class PlotEngineMixin:
                     ax_stat.xaxis.set_label_position('top')
                     ax_stat.yaxis.set_ticks_position('right')
                     ax_stat.yaxis.set_label_position('right')
+                    ax_stat.yaxis.set_visible(True)
                     
                     x_stat_label = "Cycle Number"
                     stat_name_en = "Mean" if stat_type == "均值" else "Variance"
@@ -940,11 +944,9 @@ class PlotEngineMixin:
                         leg3 = ax3_obj.legend(y3_lines, y3_labels_s, loc='upper left', bbox_to_anchor=(positions[2], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
                         ax3_obj.add_artist(leg3)
 
-            right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
             has_stat_axis = getattr(self, 'ax_stat_ref', None) is not None
+            right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data, plot_type=plot_type, has_stat_axis=has_stat_axis)
             top_margin = 0.86 if has_stat_axis else 0.90
-            if has_stat_axis:
-                right_margin = min(right_margin, 0.90)
             self.fig.subplots_adjust(right=right_margin, left=left_margin, top=top_margin, bottom=0.08)
             # Apply X-axis limits if specified
             try:
@@ -1376,8 +1378,10 @@ class PlotEngineMixin:
             except Exception:
                 pass
                 
-            right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
-            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=0.90, bottom=0.08)
+            has_stat_axis = getattr(self, 'ax_stat_ref', None) is not None
+            right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data, has_stat_axis=has_stat_axis)
+            top_margin = 0.86 if has_stat_axis else 0.90
+            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=top_margin, bottom=0.08)
             # Apply X-axis limits if specified
             try:
                 xmin_str = self.x_min_var.get().strip()
@@ -1416,11 +1420,13 @@ class PlotEngineMixin:
         h_px = int(self.canvas.height() * dpr)
         return w_px, h_px
 
-    def get_dynamic_margins(self, y1_data, y2_data, y3_data, plot_type=None):
+    def get_dynamic_margins(self, y1_data, y2_data, y3_data, plot_type=None, has_stat_axis=False):
         """根据当前图纸的实际像素宽度和字体大小，动态计算并返回左右边距百分比"""
         try:
             if plot_type is None:
                 plot_type = getattr(self, 'current_plot_type', None)
+            if not has_stat_axis:
+                has_stat_axis = getattr(self, 'ax_stat_ref', None) is not None
 
             dpr = getattr(self.canvas, 'devicePixelRatioF', lambda: getattr(self.canvas, 'devicePixelRatio', lambda: 1.0)())()
             fig_width_px = self.canvas.width() * dpr
@@ -1437,6 +1443,8 @@ class PlotEngineMixin:
             left_min_pct = float(self.safe_float_convert(self.adv_left_margin_min_pct.get(), 0.08))
             if plot_type in ['dqdv', 'dvdq']:
                 left_min_pct = max(left_min_pct, 0.14)
+                y3_data = []
+                y2_data = []
             
             left_margin_px = max(left_min_px, int(font_size * left_mult))
             
@@ -1447,7 +1455,7 @@ class PlotEngineMixin:
                 
                 right_margin_px = max(y3_min_px, int(font_size * y3_mult))
                 max_right_percent = y3_max_right_pct
-            elif y2_data:
+            elif y2_data or has_stat_axis:
                 y2_mult = float(self.safe_float_convert(self.adv_y2_margin_mult.get(), 4.0))
                 y2_min_px = float(self.safe_float_convert(self.adv_y2_margin_min_px.get(), 75.0)) * dpr
                 y2_max_right_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.9))
@@ -1468,15 +1476,19 @@ class PlotEngineMixin:
         except Exception:
             if plot_type is None:
                 plot_type = getattr(self, 'current_plot_type', None)
+            if not has_stat_axis:
+                has_stat_axis = getattr(self, 'ax_stat_ref', None) is not None
             y3_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.8)) if hasattr(self, 'adv_y3_max_right_pct') else 0.8
             y2_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.9)) if hasattr(self, 'adv_y2_max_right_pct') else 0.9
             y1_pct = float(self.safe_float_convert(self.adv_y1_max_right_pct.get(), 0.97)) if hasattr(self, 'adv_y1_max_right_pct') else 0.97
             left_pct = float(self.safe_float_convert(self.adv_left_margin_min_pct.get(), 0.08)) if hasattr(self, 'adv_left_margin_min_pct') else 0.08
             if plot_type in ['dqdv', 'dvdq']:
                 left_pct = max(left_pct, 0.14)
+                y3_data = []
+                y2_data = []
             if y3_data:
                 return y3_pct, left_pct
-            elif y2_data:
+            elif y2_data or has_stat_axis:
                 return y2_pct, left_pct
             else:
                 return y1_pct, left_pct
@@ -1491,11 +1503,9 @@ class PlotEngineMixin:
             y2_data = self.y_selections[1]
             y3_data = self.y_selections[2]
             
-            right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
             has_stat_axis = getattr(self, 'ax_stat_ref', None) is not None
+            right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data, has_stat_axis=has_stat_axis)
             top_margin = 0.86 if has_stat_axis else 0.90
-            if has_stat_axis:
-                right_margin = min(right_margin, 0.90)
                 
             self.fig.subplots_adjust(
                 right=right_margin, 
