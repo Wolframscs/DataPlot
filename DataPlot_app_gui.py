@@ -265,7 +265,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.marker_size_var = Var("5")
         self.markevery_var = Var("1")
         
-        self.version = "1.0.6"
+        self.version = "1.0.7"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False

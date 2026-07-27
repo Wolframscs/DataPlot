@@ -36,7 +36,36 @@ def run_cmd(cmd, desc):
         print(f"\n!!! {desc} 执行失败: {str(e)} !!!\n")
         return False
 
+def sync_version_from_gui():
+    import re
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    gui_file = os.path.join(script_dir, "DataPlot_app_gui.py")
+    iss_file = os.path.join(script_dir, "setup.iss")
+    if not os.path.exists(gui_file) or not os.path.exists(iss_file):
+        return
+    with open(gui_file, 'r', encoding='utf-8') as f:
+        gui_content = f.read()
+    match = re.search(r'setWindowTitle\(["\']DataPlot (v?\d+\.\d+\.\d+)["\']\)', gui_content)
+    if not match:
+        match = re.search(r'self\.version\s*=\s*["\'](v?\d+\.\d+\.\d+)["\']', gui_content)
+    if match:
+        ver_str = match.group(1)
+        ver_num = ver_str.lstrip('v')
+        with open(iss_file, 'r', encoding='utf-8') as f:
+            iss_content = f.read()
+        iss_updated = re.sub(
+            r'#define\s+MyAppVersion\s+["\'].*?["\']',
+            f'#define MyAppVersion "{ver_num}"',
+            iss_content
+        )
+        with open(iss_file, 'w', encoding='utf-8') as f:
+            f.write(iss_updated)
+        print(f"==> [版本同步] 已成功从 DataPlot_app_gui.py 读取版本号 {ver_str} 并写入 setup.iss")
+
 def main():
+    # 0. 从 DataPlot_app_gui.py 读取唯一权威版本号并同步至 setup.iss
+    sync_version_from_gui()
+
     # 1. 运行 PyInstaller 打包
     python_exe = sys.executable
     build_exe_cmd = f'"{python_exe}" DataPlot_gui_exe.py'
