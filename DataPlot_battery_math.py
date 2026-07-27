@@ -28,6 +28,20 @@ class BatteryMathMixin:
             if first_valid is not None:
                 return numeric_col - first_valid
 
+        # 3. 尝试 pd.to_datetime 解析日期时间对象或字符串 (如 '2026/04/03 22:43:11')
+        try:
+            try:
+                dt_col = pd.to_datetime(col_data, errors='coerce', format='mixed')
+            except Exception:
+                dt_col = pd.to_datetime(col_data, errors='coerce')
+            if dt_col.notna().sum() >= 0.8 * non_null_count:
+                valid_dt = dt_col.dropna()
+                first_valid = valid_dt.iloc[0] if not valid_dt.empty else None
+                if first_valid is not None:
+                    return (dt_col - first_valid).dt.total_seconds()
+        except Exception:
+            pass
+
         # 2. 如果包含 datetime.time 对象 (Excel 单元格时间格式常见)
         sample_val = non_nulls.iloc[0]
         if isinstance(sample_val, datetime.time):
@@ -177,14 +191,11 @@ class BatteryMathMixin:
                 except Exception:
                     pass
 
-        # 仅当 time_col 是真实的时间列（且非 循环列 / 工步列）时，才生成 对应时间列的时间差(s)
-        is_valid_time = (time_col != cycle_col) and (time_col != step_col)
-        if is_valid_time:
-            base_time_name = time_col.replace('_时间差(s)', '')
-            time_diff_col = f"{base_time_name}_时间差(s)"
-            t_diff = self.calculate_time_diff_series(df, time_col)
-            if t_diff is not None:
-                df[time_diff_col] = t_diff
+        base_time_name = time_col.replace('_时间差(s)', '')
+        time_diff_col = f"{base_time_name}_时间差(s)"
+        t_diff = self.calculate_time_diff_series(df, time_col)
+        if t_diff is not None:
+            df[time_diff_col] = t_diff
 
         return df
 

@@ -80,12 +80,12 @@ class PlotEngineMixin:
                     return savgol_filter(y_clean, window_length=local_w, polyorder=local_po)
                 else:
                     return pd.Series(y_clean).rolling(window=min(3, len(y_clean)), center=True, min_periods=1).mean().values
-            except ImportError:
+            except Exception:
                 half_w = (w_size - 1) // 2
                 if len(y_clean) < w_size:
                     return pd.Series(y_clean).rolling(window=min(3, len(y_clean)), center=True, min_periods=1).mean().values
-                b = np.mat([[k**i for i in range(po + 1)] for k in range(-half_w, half_w + 1)])
-                m = np.linalg.pinv(b).A[0]
+                b = np.array([[k**i for i in range(po + 1)] for k in range(-half_w, half_w + 1)])
+                m = np.linalg.pinv(b)[0]
                 firstvals = y_clean[0] - np.abs(y_clean[1:half_w + 1][::-1] - y_clean[0])
                 lastvals = y_clean[-1] + np.abs(y_clean[-half_w - 1:-1][::-1] - y_clean[-1])
                 y_padded = np.concatenate((firstvals, y_clean, lastvals))
@@ -258,6 +258,7 @@ class PlotEngineMixin:
         try:
             if plot_type is None:
                 plot_type = self.current_compare_type.get() if hasattr(self, 'current_compare_type') else 'regular'
+            self.current_plot_type = plot_type
             if self.result_df is None:
                 return
 
@@ -752,19 +753,30 @@ class PlotEngineMixin:
                     y_label_str = "dQ/dV / (Ah/V)" if plot_type == 'dqdv' else "dV/dQ / (V/Ah)"
                 self.ax.set_ylabel(y_label_str, fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
                 
-                # 绘制副 Y 轴统计折线 (均值 / 方差 点线图)
+                # 绘制副 Y 轴/顶 X 轴统计折线 (均值 / 方差 点线图)
                 stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
                 if stat_type in ["均值", "方差"] and len(stat_cycles) > 0:
-                    ax_stat = self.ax.twinx()
+                    ax_inter = self.ax.twinx()
+                    ax_stat = ax_inter.twiny()
+                    ax_inter.axis('off')
                     self.ax_stat_ref = ax_stat
                     ax_stat.spines['right'].set_position(('outward', 0))
                     set_axis_style(ax_stat)
                     
-                    label_str = f"dQ/dV {stat_type}"
+                    ax_stat.xaxis.set_ticks_position('top')
+                    ax_stat.xaxis.set_label_position('top')
+                    ax_stat.yaxis.set_ticks_position('right')
+                    ax_stat.yaxis.set_label_position('right')
+                    
+                    x_stat_label = "Cycle Number"
+                    stat_name_en = "Mean" if stat_type == "均值" else "Variance"
+                    label_str = f"dQ/dV {stat_name_en}" if plot_type == 'dqdv' else f"dV/dQ {stat_name_en}"
                     line_stat = ax_stat.plot(stat_cycles, stat_values, 'o--', 
                                              color='crimson', linewidth=1.8, markersize=6, 
                                              label=label_str)
+                    ax_stat.set_xlabel(x_stat_label, fontsize=font_size, fontfamily=font_family, color='crimson', labelpad=label_pad_val)
                     ax_stat.set_ylabel(label_str, fontsize=font_size, fontfamily=font_family, color='crimson', labelpad=label_pad_val)
+                    ax_stat.tick_params(axis='x', colors='crimson', labelsize=font_size)
                     ax_stat.tick_params(axis='y', colors='crimson', labelsize=font_size)
                     all_lines.extend(line_stat)
                     all_labels.append(label_str)
@@ -898,6 +910,9 @@ class PlotEngineMixin:
 
                 if plot_type in ['dqdv', 'dvdq']:
                     all_lines = [l for l in self.ax.get_lines() if l.get_visible()]
+                    ax_stat_obj = getattr(self, 'ax_stat_ref', None)
+                    if ax_stat_obj:
+                        all_lines.extend([l for l in ax_stat_obj.get_lines() if l.get_visible()])
                     all_labels = [l.get_label() for l in all_lines]
                     if all_lines:
                         self.ax.legend(all_lines, all_labels, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
@@ -926,7 +941,11 @@ class PlotEngineMixin:
                         ax3_obj.add_artist(leg3)
 
             right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
-            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=0.90, bottom=0.08)
+            has_stat_axis = getattr(self, 'ax_stat_ref', None) is not None
+            top_margin = 0.86 if has_stat_axis else 0.90
+            if has_stat_axis:
+                right_margin = min(right_margin, 0.90)
+            self.fig.subplots_adjust(right=right_margin, left=left_margin, top=top_margin, bottom=0.08)
             # Apply X-axis limits if specified
             try:
                 xmin_str = self.x_min_var.get().strip()
@@ -1192,6 +1211,17 @@ class PlotEngineMixin:
                 elif '循环时间' in df_to_plot.columns:
                     x_col = '循环时间'
                     
+            time_diff_col = f"{x_col}_时间差(s)"
+            if time_diff_col in df_to_plot.columns:
+                x_col = time_diff_col
+            elif x_col in df_to_plot.columns:
+                import pandas.api.types as ptypes
+                if df_to_plot[x_col].dtype == 'object' or ptypes.is_string_dtype(df_to_plot[x_col]):
+                    t_diff = self.calculate_time_diff_series(df_to_plot, x_col)
+                    if t_diff is not None:
+                        df_to_plot[time_diff_col] = t_diff
+                        x_col = time_diff_col
+
             if x_col in ['Index', 'index'] and x_col not in df_to_plot.columns:
                 x_series = pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
             elif x_col in df_to_plot.columns:
@@ -1386,9 +1416,12 @@ class PlotEngineMixin:
         h_px = int(self.canvas.height() * dpr)
         return w_px, h_px
 
-    def get_dynamic_margins(self, y1_data, y2_data, y3_data):
+    def get_dynamic_margins(self, y1_data, y2_data, y3_data, plot_type=None):
         """根据当前图纸的实际像素宽度和字体大小，动态计算并返回左右边距百分比"""
         try:
+            if plot_type is None:
+                plot_type = getattr(self, 'current_plot_type', None)
+
             dpr = getattr(self.canvas, 'devicePixelRatioF', lambda: getattr(self.canvas, 'devicePixelRatio', lambda: 1.0)())()
             fig_width_px = self.canvas.width() * dpr
             
@@ -1402,20 +1435,22 @@ class PlotEngineMixin:
             left_mult = float(self.safe_float_convert(self.adv_left_margin_mult.get(), 4.5))
             left_min_px = float(self.safe_float_convert(self.adv_left_margin_min_px.get(), 80.0)) * dpr
             left_min_pct = float(self.safe_float_convert(self.adv_left_margin_min_pct.get(), 0.08))
+            if plot_type in ['dqdv', 'dvdq']:
+                left_min_pct = max(left_min_pct, 0.14)
             
             left_margin_px = max(left_min_px, int(font_size * left_mult))
             
             if y3_data:
                 y3_mult = float(self.safe_float_convert(self.adv_y3_margin_mult.get(), 9.5))
                 y3_min_px = float(self.safe_float_convert(self.adv_y3_margin_min_px.get(), 170.0)) * dpr
-                y3_max_right_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.83))
+                y3_max_right_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.8))
                 
                 right_margin_px = max(y3_min_px, int(font_size * y3_mult))
                 max_right_percent = y3_max_right_pct
             elif y2_data:
                 y2_mult = float(self.safe_float_convert(self.adv_y2_margin_mult.get(), 4.0))
                 y2_min_px = float(self.safe_float_convert(self.adv_y2_margin_min_px.get(), 75.0)) * dpr
-                y2_max_right_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.93))
+                y2_max_right_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.9))
                 
                 right_margin_px = max(y2_min_px, int(font_size * y2_mult))
                 max_right_percent = y2_max_right_pct
@@ -1431,10 +1466,14 @@ class PlotEngineMixin:
             right_margin = max(0.3, min(1.0 - (right_margin_px / fig_width_px), max_right_percent))
             return right_margin, left_margin
         except Exception:
-            y3_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.83)) if hasattr(self, 'adv_y3_max_right_pct') else 0.83
-            y2_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.93)) if hasattr(self, 'adv_y2_max_right_pct') else 0.93
+            if plot_type is None:
+                plot_type = getattr(self, 'current_plot_type', None)
+            y3_pct = float(self.safe_float_convert(self.adv_y3_max_right_pct.get(), 0.8)) if hasattr(self, 'adv_y3_max_right_pct') else 0.8
+            y2_pct = float(self.safe_float_convert(self.adv_y2_max_right_pct.get(), 0.9)) if hasattr(self, 'adv_y2_max_right_pct') else 0.9
             y1_pct = float(self.safe_float_convert(self.adv_y1_max_right_pct.get(), 0.97)) if hasattr(self, 'adv_y1_max_right_pct') else 0.97
             left_pct = float(self.safe_float_convert(self.adv_left_margin_min_pct.get(), 0.08)) if hasattr(self, 'adv_left_margin_min_pct') else 0.08
+            if plot_type in ['dqdv', 'dvdq']:
+                left_pct = max(left_pct, 0.14)
             if y3_data:
                 return y3_pct, left_pct
             elif y2_data:
@@ -1453,11 +1492,15 @@ class PlotEngineMixin:
             y3_data = self.y_selections[2]
             
             right_margin, left_margin = self.get_dynamic_margins(y1_data, y2_data, y3_data)
+            has_stat_axis = getattr(self, 'ax_stat_ref', None) is not None
+            top_margin = 0.86 if has_stat_axis else 0.90
+            if has_stat_axis:
+                right_margin = min(right_margin, 0.90)
                 
             self.fig.subplots_adjust(
                 right=right_margin, 
                 left=left_margin, 
-                top=0.90,
+                top=top_margin,
                 bottom=0.08,
                 wspace=0.2
             )

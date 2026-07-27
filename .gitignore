@@ -44,3 +44,8 @@ ENV/
 
 # Backup / Temporary monolithic files
 DataPlot_TOTAL.py
+
+# Release and deployment scripts (excluded from repository)
+Publish_GitHub_Release.py
+Publish_GitHub_Release.bat
+

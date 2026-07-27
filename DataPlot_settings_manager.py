@@ -200,11 +200,11 @@ class SettingsMixin:
                 
                 self.adv_y3_margin_mult.set(settings.get('adv_y3_margin_mult', '9.5'))
                 self.adv_y3_margin_min_px.set(settings.get('adv_y3_margin_min_px', '170'))
-                self.adv_y3_max_right_pct.set(settings.get('adv_y3_max_right_pct', '0.83'))
+                self.adv_y3_max_right_pct.set(settings.get('adv_y3_max_right_pct', '0.8'))
                 
                 self.adv_y2_margin_mult.set(settings.get('adv_y2_margin_mult', '4.0'))
                 self.adv_y2_margin_min_px.set(settings.get('adv_y2_margin_min_px', '75'))
-                self.adv_y2_max_right_pct.set(settings.get('adv_y2_max_right_pct', '0.93'))
+                self.adv_y2_max_right_pct.set(settings.get('adv_y2_max_right_pct', '0.9'))
                 
                 self.adv_y1_margin_mult.set(settings.get('adv_y1_margin_mult', '1.5'))
                 self.adv_y1_margin_min_px.set(settings.get('adv_y1_margin_min_px', '20'))

@@ -213,7 +213,7 @@ class CanvasResizeFilter(QObject):
 class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot v1.0.6")
+        self.setWindowTitle("DataPlot v1.0.7")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -339,11 +339,11 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         self.adv_y3_margin_mult = Var("9.5")
         self.adv_y3_margin_min_px = Var("170")
-        self.adv_y3_max_right_pct = Var("0.83")
+        self.adv_y3_max_right_pct = Var("0.8")
         
         self.adv_y2_margin_mult = Var("4.0")
         self.adv_y2_margin_min_px = Var("75")
-        self.adv_y2_max_right_pct = Var("0.93")
+        self.adv_y2_max_right_pct = Var("0.9")
         
         self.adv_y1_margin_mult = Var("1.5")
         self.adv_y1_margin_min_px = Var("20")
@@ -2301,7 +2301,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.font_family.set("Microsoft YaHei")
         self.font_size.set("18")
         self.legend_font_size.set("18")
-        self.legend_cols.set("3")
+        self.legend_cols.set("1")
         self.frame_width.set("1.5")
         self.line_width.set("1.5")
         self.legend_visible.set(True)
@@ -2331,11 +2331,11 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         self.adv_y3_margin_mult.set("9.5")
         self.adv_y3_margin_min_px.set("170")
-        self.adv_y3_max_right_pct.set("0.83")
+        self.adv_y3_max_right_pct.set("0.8")
         
         self.adv_y2_margin_mult.set("4.0")
         self.adv_y2_margin_min_px.set("75")
-        self.adv_y2_max_right_pct.set("0.93")
+        self.adv_y2_max_right_pct.set("0.9")
         
         self.adv_y1_margin_mult.set("1.5")
         self.adv_y1_margin_min_px.set("20")
