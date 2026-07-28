@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFormLayout, QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton,
     QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QTextEdit, QMessageBox, QFileDialog,
-    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu, QApplication
+    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu, QApplication, QDialog
 )
 from PySide6.QtCore import Qt, QTimer, Slot, QEvent, QObject
 from PySide6.QtGui import QIcon, QFont
@@ -32,7 +32,7 @@ import pandas as pd
 import openpyxl
 
 # Import mixins with DataPlot_ prefix
-from DataPlot_data_loader import DataLoaderMixin
+from DataPlot_data_loader import DataLoaderMixin, HAS_CALAMINE
 from DataPlot_battery_math import BatteryMathMixin
 from DataPlot_plot_engine import PlotEngineMixin
 from DataPlot_excel_exporter import ExcelExporterMixin
@@ -202,6 +202,80 @@ def bind_combobox(widget, var):
     var.trace_add('write', on_var_changed)
     on_var_changed()
 
+class MultiSheetSelectDialog(QDialog):
+    def __init__(self, sheet_names, current_selected=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("选择 Sheet (勾选需合并的表格)")
+        self.resize(340, 420)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        
+        tip_lbl = QLabel("请勾选需要合并读取的 Sheet 表格:")
+        tip_lbl.setWordWrap(True)
+        layout.addWidget(tip_lbl)
+        
+        self.list_widget = QListWidget(self)
+        layout.addWidget(self.list_widget)
+        
+        selected_set = set()
+        if current_selected:
+            if isinstance(current_selected, str):
+                parts = [p.strip() for p in current_selected.replace(';', ',').split(',') if p.strip()]
+                selected_set = set(parts)
+            elif isinstance(current_selected, (list, tuple, set)):
+                selected_set = set(current_selected)
+                
+        for name in sheet_names:
+            item = QListWidgetItem(name, self.list_widget)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            if name in selected_set:
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+                
+        # 全选 / 全不选 辅助按钮
+        btn_box = QHBoxLayout()
+        select_all_btn = QPushButton("全选")
+        clear_btn = QPushButton("全不选")
+        btn_box.addWidget(select_all_btn)
+        btn_box.addWidget(clear_btn)
+        layout.addLayout(btn_box)
+        
+        def select_all():
+            for i in range(self.list_widget.count()):
+                self.list_widget.item(i).setCheckState(Qt.Checked)
+                
+        def clear_all():
+            for i in range(self.list_widget.count()):
+                self.list_widget.item(i).setCheckState(Qt.Unchecked)
+                
+        select_all_btn.clicked.connect(select_all)
+        clear_btn.clicked.connect(clear_all)
+        
+        # 底部确定与取消按钮
+        action_box = QHBoxLayout()
+        action_box.addStretch(1)
+        ok_btn = QPushButton("确定")
+        cancel_btn = QPushButton("取消")
+        ok_btn.setFixedWidth(75)
+        cancel_btn.setFixedWidth(75)
+        action_box.addWidget(ok_btn)
+        action_box.addWidget(cancel_btn)
+        layout.addLayout(action_box)
+        
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        
+    def get_selected_sheets(self):
+        res = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                res.append(item.text())
+        return res
+
 class CanvasResizeFilter(QObject):
     def __init__(self, gui):
         super().__init__()
@@ -282,6 +356,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.file_type = Var("raw")
         self.file_path = Var("")
         self.sheet_name = Var("")
+        self.merge_sheets_var = Var(False)
         self.skip_rows_var = Var("3")
         self.start_skip_var = Var("8")
         self.start_row = Var("1")
@@ -597,15 +672,31 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         input_grid.addWidget(self.file_entry, 0, 1)
         
         self.browse_btn = QPushButton("浏览")
+        self.browse_btn.setFixedWidth(75)
         self.browse_btn.clicked.connect(self.browse_file)
         input_grid.addWidget(self.browse_btn, 0, 2)
         
         input_grid.addWidget(QLabel("表格名称:"), 1, 0)
+        
+        sheet_container = QWidget()
+        sheet_layout = QHBoxLayout(sheet_container)
+        sheet_layout.setContentsMargins(0, 0, 0, 0)
+        sheet_layout.setSpacing(4)
+        
         self.sheet_combo = CustomComboBox()
         bind_combobox(self.sheet_combo, self.sheet_name)
-        input_grid.addWidget(self.sheet_combo, 1, 1)
+        sheet_layout.addWidget(self.sheet_combo, 1)
+        
+        self.sheet_select_btn = QPushButton("多选...")
+        self.sheet_select_btn.setToolTip("勾选并合并 Excel 中的任意一个或多个 Sheet")
+        self.sheet_select_btn.setFixedWidth(75)
+        self.sheet_select_btn.clicked.connect(self.open_multi_sheet_dialog)
+        sheet_layout.addWidget(self.sheet_select_btn, 0)
+        
+        input_grid.addWidget(sheet_container, 1, 1)
         
         self.process_btn = QPushButton("读取")
+        self.process_btn.setFixedWidth(75)
         self.process_btn.clicked.connect(self.process_data)
         input_grid.addWidget(self.process_btn, 1, 2)
         
@@ -647,6 +738,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         input_grid.addWidget(sub_param_widget, 2, 0, 1, 2)
         
         self.csv2xlsx_btn = QPushButton("csv2xlsx")
+        self.csv2xlsx_btn.setFixedWidth(75)
         self.csv2xlsx_btn.clicked.connect(self.convert_csv_to_xlsx)
         input_grid.addWidget(self.csv2xlsx_btn, 2, 2)
         
@@ -1606,13 +1698,51 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             self.battery_filter_frame.setVisible(False)
             self.cycle_compare_frame.setVisible(False)
 
-        if self.file_type.get() == "raw":
-            self.sheet_combo.setEnabled(True)
-        else:
-            if self.file_path.get() and self.file_path.get().endswith('.xlsx'):
-                self.sheet_combo.setEnabled(True)
+    def open_multi_sheet_dialog(self):
+        filename = self.file_path.get()
+        if not filename or not os.path.exists(filename):
+            QMessageBox.warning(self, "提示", "请先选择一个有效的 Excel 文件！")
+            return
+            
+        if not (filename.endswith('.xlsx') or filename.endswith('.xls')):
+            QMessageBox.warning(self, "提示", "当前选择的文件不是 Excel 表格！")
+            return
+            
+        try:
+            engine = 'calamine' if HAS_CALAMINE else None
+            excel_file = pd.ExcelFile(filename, engine=engine)
+            sheet_names = list(excel_file.sheet_names)
+            excel_file.close()
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"无法读取 Excel Sheet 列表: {str(e)}")
+            return
+            
+        if not sheet_names:
+            QMessageBox.warning(self, "提示", "Excel 文件中没有发现任何 Sheet 表格！")
+            return
+            
+        cur_sheet = self.sheet_name.get()
+        dlg = MultiSheetSelectDialog(sheet_names, current_selected=cur_sheet, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            selected_sheets = dlg.get_selected_sheets()
+            if not selected_sheets:
+                QMessageBox.warning(self, "提示", "未勾选任何 Sheet，保留原设置。")
+                return
+            
+            combo_val = ", ".join(selected_sheets)
+            
+            idx = self.sheet_combo.findText(combo_val)
+            if idx < 0:
+                self.sheet_combo.addItem(combo_val)
+            self.sheet_combo.setCurrentText(combo_val)
+            self.sheet_name.set(combo_val)
+            
+            if len(selected_sheets) > 1:
+                self.sheet_select_btn.setText(f"已选({len(selected_sheets)})")
+                self.update_status(f"已选中 {len(selected_sheets)} 个 Sheet 进行合并读取: {combo_val}")
             else:
-                self.sheet_combo.setEnabled(False)
+                self.sheet_select_btn.setText("多选...")
+                self.update_status(f"已选择 Sheet: {combo_val}")
 
     def on_selection_change(self, event):
         """当任何Listbox的选择改变时更新状态"""

@@ -51,11 +51,12 @@
     "dqdv_stat": "方差",
     "dqdv_mode": "原始",
     "filter_type": "高斯滤波",
+    "merge_sheets": false,
     "panel_font_family": "Microsoft YaHei",
     "panel_font_size": "13",
     "panel_width": 560,
     "canvas_width": 1000,
     "win_height_pct": "0.85",
     "canvas_bg": "默认(白色)",
-    "last_browse_dir": "E:/ProcedureCode/Antigravity/DataPlot_QT/TestData"
+    "last_browse_dir": "E:/ProcedureCode/Antigravity/DataPlot/DataPlot_QT/TestData"
 }

@@ -101,6 +101,7 @@ class SettingsMixin:
             'dqdv_stat': self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else 'None',
             'dqdv_mode': self.dqdv_mode_var.get() if hasattr(self, 'dqdv_mode_var') else '去重',
             'filter_type': self.filter_type_var.get() if hasattr(self, 'filter_type_var') else '无',
+            'merge_sheets': self.merge_sheets_var.get() if hasattr(self, 'merge_sheets_var') else False,
             
             # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
@@ -171,6 +172,8 @@ class SettingsMixin:
                     self.dqdv_mode_var.set(settings.get('dqdv_mode', '去重'))
                 if hasattr(self, 'filter_type_var'):
                     self.filter_type_var.set(settings.get('filter_type', '无'))
+                if hasattr(self, 'merge_sheets_var'):
+                    self.merge_sheets_var.set(settings.get('merge_sheets', False))
                 
                 # Load X & Y axes configs
                 self.x_min_var.set(settings.get('x_min', ''))

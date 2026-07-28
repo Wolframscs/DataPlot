@@ -40,6 +40,131 @@ class DataLoaderMixin:
             self.update_status(error_msg, clear=True)
             self.set_buttons_state(True)
 
+    def _read_single_or_multi_excel_sheet(self, file_path, sheet_name_input, start_row=0, skiprows=0):
+        """通用 Excel 读取函数：支持单 Sheet 或多 Sheet 合并读取"""
+        all_sheets = []
+        try:
+            engine = 'calamine' if HAS_CALAMINE else None
+            excel_file = pd.ExcelFile(file_path, engine=engine)
+            all_sheets = list(excel_file.sheet_names)
+            excel_file.close()
+        except Exception:
+            try:
+                wb = openpyxl.load_workbook(file_path, read_only=True)
+                all_sheets = list(wb.sheetnames)
+                wb.close()
+            except Exception:
+                all_sheets = []
+
+        if not all_sheets:
+            raise ValueError("无法解析 Excel 中的 Sheet 结构")
+
+        input_str = str(sheet_name_input).strip()
+        is_merge_checked = hasattr(self, 'merge_sheets_var') and bool(self.merge_sheets_var.get())
+        
+        # 判断要读取的 Sheet 列表
+        is_all = (
+            is_merge_checked or
+            input_str == "[全部Sheet合并]" or 
+            "[全部" in input_str or 
+            input_str.lower() in ["all", "全部", "[all]"]
+        )
+        
+        if is_all:
+            target_sheets = all_sheets
+        elif ',' in input_str or ';' in input_str:
+            parts = [p.strip() for p in input_str.replace(';', ',').split(',') if p.strip()]
+            target_sheets = [s for s in parts if s in all_sheets]
+            if not target_sheets:
+                target_sheets = [all_sheets[0]]
+        elif input_str in all_sheets:
+            target_sheets = [input_str]
+        else:
+            target_sheets = [all_sheets[0]]
+
+        if len(target_sheets) > 1:
+            self.msg_queue.put({
+                'type': 'status', 
+                'message': f"准备合并读取 {len(target_sheets)} 个 Sheet ({', '.join(target_sheets[:3])}{'...' if len(target_sheets)>3 else ''})..."
+            })
+
+        dfs = []
+        for s_idx, s_name in enumerate(target_sheets):
+            if len(target_sheets) > 1:
+                self.msg_queue.put({
+                    'type': 'status', 
+                    'message': f"正在读取 Sheet ({s_idx+1}/{len(target_sheets)}): '{s_name}'..."
+                })
+            
+            df_s = None
+            # 优先使用 Polars 快速读取
+            try:
+                import polars as pl
+                read_opts = {}
+                eff_header = skiprows if skiprows > 0 else start_row
+                if eff_header > 0:
+                    read_opts['header_row'] = eff_header
+                df_pl = pl.read_excel(
+                    file_path,
+                    sheet_name=s_name,
+                    read_options=read_opts
+                )
+                df_s = pd.DataFrame(df_pl.to_dict(as_series=False))
+                df_s.columns = [col.replace('__UNNAMED__', 'Unnamed: ') if str(col).startswith('__UNNAMED__') else col for col in df_s.columns]
+                df_s = df_s.dropna(how='all')
+            except Exception:
+                df_s = None
+
+            # 备选 A: Calamine / pandas
+            if df_s is None:
+                use_cal = HAS_CALAMINE
+                if use_cal:
+                    try:
+                        skip_arg = skiprows if skiprows > 0 else (start_row if start_row > 0 else None)
+                        df_s = pd.read_excel(
+                            file_path,
+                            sheet_name=s_name,
+                            skiprows=skip_arg,
+                            engine='calamine'
+                        )
+                        df_s = df_s.dropna(how='all')
+                    except Exception:
+                        use_cal = False
+                
+                # 备选 B: openpyxl read-only 模式
+                if not use_cal:
+                    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+                    sheet = wb[s_name] if s_name in wb.sheetnames else wb.active
+                    data = []
+                    header = None
+                    eff_start = skiprows if skiprows > 0 else start_row
+                    for r_idx, row in enumerate(sheet.iter_rows(values_only=True)):
+                        if r_idx < eff_start:
+                            continue
+                        if r_idx == eff_start:
+                            header = list(row)
+                        else:
+                            data.append(row)
+                    df_s = pd.DataFrame(data, columns=header)
+                    df_s = df_s.dropna(how='all')
+                    wb.close()
+
+            if df_s is not None and not df_s.empty:
+                dfs.append(df_s)
+
+        if not dfs:
+            raise ValueError("未能从 Excel 的指定的 Sheet 中读取到有效数据")
+
+        if len(dfs) == 1:
+            return dfs[0]
+        else:
+            merged_df = pd.concat(dfs, ignore_index=True)
+            self.msg_queue.put({
+                'type': 'status', 
+                'message': f"成功将 {len(dfs)} 个 Sheet 的数据合并为 1 个表 (共 {len(merged_df)} 行)"
+            })
+            return merged_df
+
     def _bg_process_data(self, file_path, file_type, sheet_name, start_row_str):
         """后台线程处理函数，避免阻塞 UI 主线程"""
         try:
@@ -57,34 +182,10 @@ class DataLoaderMixin:
                 self.msg_queue.put({'type': 'status', 'message': "开始读取原始Excel文件...", 'clear': True})
                 try:
                     start_time = time.time()
-                    self.msg_queue.put({'type': 'status', 'message': "正在读取文件..."})
-                    df = None
-
-                    try:
-                        self.msg_queue.put({'type': 'status', 'message': "优先尝试使用 Polars 快速读取 Excel..."})
-                        import polars as pl
-                        df_pl = pl.read_excel(
-                            file_path,
-                            sheet_name=sheet_name,
-                            read_options={'header_row': skip_rows}
-                        )
-                        df = pd.DataFrame(df_pl.to_dict(as_series=False))
-                        df.columns = [col.replace('__UNNAMED__', 'Unnamed: ') if str(col).startswith('__UNNAMED__') else col for col in df.columns]
-                    except Exception as pl_err:
-                        self.msg_queue.put({'type': 'status', 'message': f"Polars 读取 Excel 失败: {str(pl_err)}，切换至 Pandas Calamine 读取..."})
-                        df = None
-                        
-                    if df is None:
-                        engine = 'calamine' if HAS_CALAMINE else 'openpyxl'
-                        df = pd.read_excel(
-                            file_path,
-                            sheet_name=sheet_name,
-                            skiprows=skip_rows,
-                            header=0,
-                            engine=engine
-                        )
+                    df = self._read_single_or_multi_excel_sheet(file_path, sheet_name, skiprows=skip_rows)
                     
-                    df = df.iloc[start_skip:].reset_index(drop=True)
+                    if start_skip > 0:
+                        df = df.iloc[start_skip:].reset_index(drop=True)
                     
                     def clean_column_name(col):
                         col = str(col)
@@ -211,64 +312,9 @@ class DataLoaderMixin:
                             return
                         df = df.dropna(how='all')
                     else:
-                        self.msg_queue.put({'type': 'status', 'message': "正在读取文件..."})
-                        df = None
-                        try:
-                            self.msg_queue.put({'type': 'status', 'message': "优先尝试使用 Polars 快速读取 Excel..."})
-                            import polars as pl
-                            read_opts = {'header_row': start_row} if start_row > 0 else {}
-                            df_pl = pl.read_excel(
-                                file_path,
-                                sheet_name=sheet_name,
-                                read_options=read_opts
-                            )
-                            df = pd.DataFrame(df_pl.to_dict(as_series=False))
-                            df.columns = [col.replace('__UNNAMED__', 'Unnamed: ') if str(col).startswith('__UNNAMED__') else col for col in df.columns]
-                            df = df.dropna(how='all')
-                        except Exception as pl_err:
-                            self.msg_queue.put({'type': 'status', 'message': f"Polars 读取 Excel 失败: {str(pl_err)}，切换至 Pandas Calamine 读取..."})
-                            df = None
-
-                        if df is None:
-                            use_calamine = HAS_CALAMINE
-                            if use_calamine:
-                                self.msg_queue.put({'type': 'status', 'message': "正在使用 Calamine 快速读取..."})
-                                try:
-                                    df = pd.read_excel(
-                                        file_path,
-                                        sheet_name=sheet_name,
-                                        skiprows=start_row if start_row > 0 else None,
-                                        engine='calamine'
-                                    )
-                                    df = df.dropna(how='all')
-                                except Exception as e:
-                                    self.msg_queue.put({'type': 'status', 'message': f"Calamine 读取失败, 尝试标准方法: {str(e)}"})
-                                    use_calamine = False
-                            
-                            if not use_calamine:
-                                self.msg_queue.put({'type': 'status', 'message': "正在使用 openpyxl read-only 模式读取..."})
-                                wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-                                sheet = wb[sheet_name] if sheet_name in wb.sheetnames else wb.active
-                                total_rows = sheet.max_row
-                                self.msg_queue.put({'type': 'status', 'message': f"文件总行数: {total_rows or '未知'}"})
-                                
-                                data = []
-                                header = None
-                                for r_idx, row in enumerate(sheet.iter_rows(values_only=True)):
-                                    if r_idx < start_row:
-                                        continue
-                                    if r_idx == start_row:
-                                        header = list(row)
-                                    else:
-                                        data.append(row)
-                                    
-                                    if r_idx > start_row and (r_idx - start_row) % 20000 == 0:
-                                        percent = ((r_idx - start_row) / total_rows * 100) if total_rows else 0
-                                        self.msg_queue.put({'type': 'status', 'message': f"读取进度: {percent:.1f}% ({r_idx - start_row}/{total_rows - start_row if total_rows else '未知'}行)"})
-                                
-                                df = pd.DataFrame(data, columns=header)
-                                df = df.dropna(how='all')
-                                wb.close()
+                        self.msg_queue.put({'type': 'status', 'message': "正在读取Excel文件...", 'clear': True})
+                        start_time = time.time()
+                        df = self._read_single_or_multi_excel_sheet(file_path, sheet_name, start_row=start_row)
 
                     if df is not None and start_skip > 0:
                         df = df.iloc[start_skip:].reset_index(drop=True)
@@ -423,82 +469,12 @@ class DataLoaderMixin:
                     self.msg_queue.put({'type': 'status', 'message': "开始读取Excel文件...", 'clear': True})
                     try:
                         start_time = time.time()
-                        self.msg_queue.put({'type': 'status', 'message': "正在计算文件大小..."})
-                        try:
-                            wb = openpyxl.load_workbook(file_path, read_only=True)
-                            if sheet_name in wb.sheetnames:
-                                sheet = wb[sheet_name]
-                                total_rows = sheet.max_row
-                            else:
-                                total_rows = wb.active.max_row
-                            wb.close()
-                        except Exception:
-                            total_rows = None
-                        
-                        if total_rows:
-                            self.msg_queue.put({'type': 'status', 'message': f"文件总行数: {total_rows}"})
-                            if total_rows <= start_row:
-                                self.msg_queue.put({'type': 'error', 'message': "错误：起始行（IniRow）超出文件总行数"})
-                                return
-                        
-                        result_df = None
-                        try:
-                            self.msg_queue.put({'type': 'status', 'message': "优先尝试使用 Polars 快速读取 Excel..."})
-                            import polars as pl
-                            read_opts = {'header_row': start_row} if start_row > 0 else {}
-                            df_pl = pl.read_excel(
-                                file_path,
-                                sheet_name=sheet_name,
-                                read_options=read_opts
-                            )
-                            result_df = pd.DataFrame(df_pl.to_dict(as_series=False))
-                            result_df.columns = [col.replace('__UNNAMED__', 'Unnamed: ') if str(col).startswith('__UNNAMED__') else col for col in result_df.columns]
-                        except Exception as pl_err:
-                            self.msg_queue.put({'type': 'status', 'message': f"Polars 读取 Excel 失败: {str(pl_err)}，切换至 Pandas Calamine 读取..."})
-                            result_df = None
-
-                        if result_df is None:
-                            use_calamine = HAS_CALAMINE
-                            if use_calamine:
-                                self.msg_queue.put({'type': 'status', 'message': "正在使用 Calamine 快速读取..."})
-                                try:
-                                    result_df = pd.read_excel(
-                                        file_path,
-                                        sheet_name=sheet_name,
-                                        skiprows=start_row,
-                                        engine='calamine'
-                                    )
-                                except Exception as e:
-                                    self.msg_queue.put({'type': 'status', 'message': f"Calamine 读取失败, 尝试标准方法: {str(e)}"})
-                                    use_calamine = False
-                                    
-                            if not use_calamine:
-                                self.msg_queue.put({'type': 'status', 'message': "正在使用 openpyxl read-only 模式读取..."})
-                                wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-                                sheet = wb[sheet_name] if sheet_name in wb.sheetnames else wb.active
-                                
-                                data = []
-                                header = None
-                                for r_idx, row in enumerate(sheet.iter_rows(values_only=True)):
-                                    if r_idx < start_row:
-                                        continue
-                                    if r_idx == start_row:
-                                        header = list(row)
-                                    else:
-                                        data.append(row)
-                                    
-                                    if r_idx > start_row and (r_idx - start_row) % 20000 == 0:
-                                        percent = ((r_idx - start_row) / total_rows * 100) if total_rows else 0
-                                        self.msg_queue.put({'type': 'status', 'message': f"读取进度: {percent:.1f}% ({r_idx - start_row}/{total_rows - start_row if total_rows else '未知'}行)"})
-                                
-                                result_df = pd.DataFrame(data, columns=header)
-                                wb.close()
+                        result_df = self._read_single_or_multi_excel_sheet(file_path, sheet_name, start_row=start_row)
                         end_time = time.time()
                         if result_df is not None:
                             if start_skip > 0:
                                 result_df = result_df.iloc[start_skip:].reset_index(drop=True)
                             self.msg_queue.put({'type': 'done', 'df': result_df, 'message': f"文件读取完成，耗时: {end_time - start_time:.2f}秒，共读取 {len(result_df)} 行数据"})
-                        
                     except Exception as e:
                         self.msg_queue.put({'type': 'error', 'message': f"读取Excel文件失败: {str(e)}"})
                         return
@@ -549,17 +525,28 @@ class DataLoaderMixin:
             if hasattr(self, 'save_settings'):
                 self.save_settings()
             try:
-                if filename.endswith('.xlsx'):
+                if filename.endswith('.xlsx') or filename.endswith('.xls'):
                     engine = 'calamine' if HAS_CALAMINE else None
                     excel_file = pd.ExcelFile(filename, engine=engine)
-                    self.sheet_combo['values'] = excel_file.sheet_names
-                    if excel_file.sheet_names:
-                        default_sheet = excel_file.sheet_names[0]
-                        for s_name in excel_file.sheet_names:
+                    sheet_names = list(excel_file.sheet_names)
+                    excel_file.close()
+                    if sheet_names:
+                        combo_options = sheet_names
+                        if hasattr(self.sheet_combo, 'clear'):
+                            self.sheet_combo.clear()
+                            self.sheet_combo.addItems(combo_options)
+                        else:
+                            self.sheet_combo['values'] = combo_options
+                        
+                        default_sheet = sheet_names[0]
+                        for s_name in sheet_names:
                             if 'data' in s_name.lower() or '数据' in s_name:
                                 default_sheet = s_name
                                 break
                         self.sheet_combo.set(default_sheet)
+                    if hasattr(self, 'sheet_select_btn'):
+                        self.sheet_select_btn.setText("多选...")
+                        self.sheet_select_btn.setEnabled(True)
                     self.sheet_combo.setEnabled(True)
                 else:
                     self.sheet_combo.setEnabled(False)
