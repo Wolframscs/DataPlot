@@ -92,7 +92,7 @@ class BatteryMathMixin:
         except Exception:
             pass
 
-        # 5. 自定义字符串拆分兜底 (精准兼容超过 24 小时的工程累计时间文本如 93:33:34.69)
+        # 3. 自定义字符串拆分兜底 (精准兼容超过 24 小时的工程累计时间文本如 93:33:34.69)
         try:
             def split_to_sec(s):
                 try:
@@ -152,16 +152,18 @@ class BatteryMathMixin:
                 return df
                 
             # 保证按时间先后排序，以便差分
-            df = df.sort_values(by=[cycle_col, time_col])
+            time_diff_col = f"{time_col}_时间差(s)"
+            t_col_to_use = time_diff_col if time_diff_col in df.columns else time_col
+            try:
+                df = df.sort_values(by=[cycle_col, t_col_to_use])
+            except Exception:
+                pass
             
             # 判断循环或工步是否发生变化，以识别连续的工步段
             cycle_series = df[cycle_col]
             step_series = df[step_col]
             change = (cycle_series != cycle_series.shift()) | (step_series != step_series.shift())
             step_group = change.cumsum()
-            
-            time_diff_col = f"{time_col}_时间差(s)"
-            t_col_to_use = time_diff_col if time_diff_col in df.columns else time_col
             
             df['工步时间'] = 0.0
             for g_id, group_df in df.groupby(step_group):
@@ -177,6 +179,127 @@ class BatteryMathMixin:
             df['工步时间'] = 0.0
             df['工步时间差(s)'] = 0.0
             return df
+
+    def filter_cycles_by_duration(self, df, cycle_col, step_col, time_col, step_filter_val, tmin_val, tmax_val, filter_mode="保留区间", target_cycles=None):
+        """
+        根据工步或循环的总持续时间(Duration)筛选保留或剔除循环：
+        - step_filter_val: 具体工步（如 '3' 或 '恒功率放'）时针对该工步总时长；为 '全部' 或 '' 时针对该循环总时长。
+        - filter_mode: '保留区间' (tmin <= T <= tmax), '< tmin', '> tmax', '区间外' (T < tmin 或 T > tmax)。
+        返回: (kept_cycles, removed_reasons_dict, duration_dict)
+        """
+        if df is None or df.empty or not cycle_col or cycle_col not in df.columns:
+            return target_cycles if target_cycles is not None else [], {}, {}
+
+        # 检查是否启用了时间筛选
+        has_min = (tmin_val is not None and not np.isnan(tmin_val))
+        has_max = (tmax_val is not None and not np.isnan(tmax_val))
+        
+        # 获取要检查的循环列表
+        if target_cycles is not None:
+            candidate_cycles = list(target_cycles)
+        else:
+            try:
+                candidate_cycles = list(df[cycle_col].dropna().unique())
+            except Exception:
+                candidate_cycles = []
+
+        if not candidate_cycles:
+            return [], {}, {}
+
+        if not has_min and not has_max:
+            return candidate_cycles, {}, {}
+
+        time_diff_col = f"{time_col}_时间差(s)"
+        t_col = time_diff_col if (time_col and time_diff_col in df.columns) else time_col
+
+        kept_cycles = []
+        removed_reasons = {}
+        durations = {}
+
+        is_all_steps = (not step_filter_val or step_filter_val == "全部")
+
+        for c in candidate_cycles:
+            # 获取当前循环的数据
+            try:
+                c_num = float(c)
+                mask_c = pd.to_numeric(df[cycle_col], errors='coerce') == c_num
+            except (ValueError, TypeError):
+                mask_c = df[cycle_col].astype(str) == str(c)
+                
+            sub_c = df[mask_c]
+            if sub_c.empty:
+                continue
+
+            # 筛选工步
+            target_sub = sub_c
+            step_desc = "循环总时间" if is_all_steps else f"工步[{step_filter_val}]"
+            if not is_all_steps and step_col and step_col in sub_c.columns:
+                step_str_val = str(step_filter_val).strip()
+                exact_mask = sub_c[step_col].astype(str).str.strip() == step_str_val
+                if exact_mask.any():
+                    target_sub = sub_c[exact_mask]
+                else:
+                    fuzzy_mask = sub_c[step_col].astype(str).str.contains(step_str_val, case=False, na=False)
+                    if fuzzy_mask.any():
+                        target_sub = sub_c[fuzzy_mask]
+                    else:
+                        target_sub = pd.DataFrame()
+
+            # 计算持续时长
+            duration = 0.0
+            if not target_sub.empty and t_col and t_col in target_sub.columns:
+                t_arr = pd.to_numeric(target_sub[t_col], errors='coerce').dropna().values
+                if len(t_arr) >= 2:
+                    duration = float(t_arr[-1] - t_arr[0])
+                elif len(t_arr) == 1:
+                    duration = 0.0
+            
+            durations[c] = duration
+
+            # 根据模式判定是否保留
+            keep = True
+            reason = ""
+
+            mode_str = str(filter_mode).strip()
+            if mode_str in ["保留区间", "区间内", "保留"]:
+                if has_min and duration < tmin_val:
+                    keep = False
+                    reason = f"{step_desc}时长 {duration:.1f}s < tmin({tmin_val:g}s)"
+                elif has_max and duration > tmax_val:
+                    keep = False
+                    reason = f"{step_desc}时长 {duration:.1f}s > tmax({tmax_val:g}s)"
+            elif mode_str in ["< tmin", "小于tmin"]:
+                if has_min:
+                    if duration >= tmin_val:
+                        keep = False
+                        reason = f"{step_desc}时长 {duration:.1f}s >= tmin({tmin_val:g}s)"
+                else:
+                    keep = True
+            elif mode_str in ["> tmax", "大于tmax"]:
+                if has_max:
+                    if duration <= tmax_val:
+                        keep = False
+                        reason = f"{step_desc}时长 {duration:.1f}s <= tmax({tmax_val:g}s)"
+                else:
+                    keep = True
+            elif mode_str in ["区间外", "反向(区间外)"]:
+                if has_min and has_max:
+                    if tmin_val <= duration <= tmax_val:
+                        keep = False
+                        reason = f"{step_desc}时长 {duration:.1f}s 落在区间 [{tmin_val:g}s, {tmax_val:g}s] 内"
+                elif has_min and duration >= tmin_val:
+                    keep = False
+                    reason = f"{step_desc}时长 {duration:.1f}s >= tmin({tmin_val:g}s)"
+                elif has_max and duration <= tmax_val:
+                    keep = False
+                    reason = f"{step_desc}时长 {duration:.1f}s <= tmax({tmax_val:g}s)"
+
+            if keep:
+                kept_cycles.append(c)
+            else:
+                removed_reasons[c] = reason
+
+        return kept_cycles, removed_reasons, durations
 
     def recompute_all_time_diffs(self, df, time_col, cycle_col=None, step_col=None):
         """仅对有效的时间列生成相对时间差列，绝不删除表格原有的任何列，也不对非时间列生成后缀列"""
@@ -200,8 +323,9 @@ class BatteryMathMixin:
         return df
 
     def parse_cycles(self, cycle_str, max_cycle):
-        """解析循环范围字符串，支持 '1, max, 10' 或者逗号分隔的列表"""
-        parts = [p.strip() for p in cycle_str.split(',')]
+        """解析循环范围字符串，支持 '1, max, 10'、逗号列表或 '1-5'/'1~max' 范围"""
+        cycle_str = str(cycle_str).strip()
+        parts = [p.strip() for p in cycle_str.split(',') if p.strip()]
         if len(parts) == 3:
             try:
                 start = int(parts[0])
@@ -212,15 +336,35 @@ class BatteryMathMixin:
                     return list(range(start, end + 1, step))
                 else:
                     end = int(end_val)
-                    if step <= abs(end - start) and step > 0:
+                    # 仅当步长合理且结束值大于起始值时才按切片解析
+                    if step > 0 and end >= start and step <= (end - start):
                         return list(range(start, end + 1, step))
             except ValueError:
                 pass
         
         cycles = []
         for p in parts:
-            if p.lower() == 'max':
+            p_lower = p.lower()
+            if p_lower == 'max':
                 cycles.append(int(max_cycle))
+            elif '-' in p or '~' in p:
+                sep = '-' if '-' in p else '~'
+                sub_parts = p.split(sep)
+                if len(sub_parts) == 2:
+                    try:
+                        s_val = int(sub_parts[0].strip())
+                        e_val = int(max_cycle) if sub_parts[1].strip().lower() == 'max' else int(sub_parts[1].strip())
+                        if s_val <= e_val:
+                            cycles.extend(range(s_val, e_val + 1))
+                        else:
+                            cycles.extend(range(s_val, e_val - 1, -1))
+                        continue
+                    except ValueError:
+                        pass
+                try:
+                    cycles.append(int(p))
+                except ValueError:
+                    pass
             else:
                 try:
                     cycles.append(int(p))

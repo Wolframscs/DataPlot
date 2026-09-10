@@ -386,6 +386,38 @@ class PlotEngineMixin:
             else:
                 set_axis_style(self.ax)
 
+            # Apply scale factors if specified
+            v_scale = self.safe_float_convert(self.voltage_scale_var.get(), 1.0)
+            c_scale = self.safe_float_convert(self.current_scale_var.get(), 1.0)
+
+            # 时长筛选 (tmin ~ tmax)
+            tmin_str = self.time_filter_min_var.get().strip() if hasattr(self, 'time_filter_min_var') else ""
+            tmax_str = self.time_filter_max_var.get().strip() if hasattr(self, 'time_filter_max_var') else ""
+            filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "保留区间"
+            try:
+                tmin_val = float(tmin_str) if tmin_str else None
+            except ValueError:
+                tmin_val = None
+            try:
+                tmax_val = float(tmax_str) if tmax_str else None
+            except ValueError:
+                tmax_val = None
+
+            if tmin_val is not None or tmax_val is not None:
+                kept_cycles, removed_reasons, _ = self.filter_cycles_by_duration(
+                    self.result_df, cycle_col_name, step_col_name, time_col_name,
+                    step_val, tmin_val, tmax_val, filter_mode, target_cycles=cycles
+                )
+                if removed_reasons:
+                    removed_summary = ", ".join([f"C{c} ({reason})" for c, reason in removed_reasons.items()])
+                    self.update_status(f"时间筛选：已过滤剔除 {len(removed_reasons)} 个循环 -> {removed_summary}")
+                cycles = kept_cycles
+                if not cycles:
+                    self.update_status("经过时间筛选后，没有符合条件的循环。")
+                    self.ax.clear()
+                    self.canvas.draw()
+                    return
+
             all_x_points = []
             stat_cycles = []
             stat_values = []
@@ -403,7 +435,7 @@ class PlotEngineMixin:
                         mask_c = self.result_df[cycle_col_name].astype(str) == str(c_item)
                     df_sub_u = self.result_df[mask_c]
                     if voltage_col_name in df_sub_u.columns:
-                        u_series = pd.to_numeric(df_sub_u[voltage_col_name], errors='coerce').dropna()
+                        u_series = pd.to_numeric(df_sub_u[voltage_col_name], errors='coerce').dropna() * v_scale
                         if len(u_series) > 0:
                             overall_u_min = min(overall_u_min, float(u_series.min()))
                             overall_u_max = max(overall_u_max, float(u_series.max()))
@@ -418,9 +450,6 @@ class PlotEngineMixin:
 
             for idx, c in enumerate(cycles):
                 df_c = self.result_df[self.result_df[cycle_col_name] == c].copy()
-                # Apply scale factors if specified
-                v_scale = self.safe_float_convert(self.voltage_scale_var.get(), 1.0)
-                c_scale = self.safe_float_convert(self.current_scale_var.get(), 1.0)
                 if v_scale != 1.0 and voltage_col_name in df_c.columns:
                     df_c[voltage_col_name] = pd.to_numeric(df_c[voltage_col_name], errors='coerce') * v_scale
                 if c_scale != 1.0 and current_col_name in df_c.columns:
@@ -485,11 +514,11 @@ class PlotEngineMixin:
                         step_curr = curr_vals[mask]
                         step_dt = dt[mask]
                         
-                        step_dq = np.abs(step_curr * step_dt) / 3600.0
+                        step_dq = (step_curr * multiplier * step_dt) / 3600.0
                         step_cap = np.cumsum(step_dq)
                         cap_vals[mask] = step_cap
                 else:
-                    dq = np.abs(curr_vals * dt) / 3600.0
+                    dq = (curr_vals * multiplier * dt) / 3600.0
                     cap_vals = np.cumsum(dq)
 
                 if plot_type in ['dqdv', 'dvdq']:
@@ -504,8 +533,10 @@ class PlotEngineMixin:
                     t_sub = t_rel[non_zero_mask]
                     
                     # 尝试计算工步时间作为候选 X 轴
-                    if '工步时间(s)' in df_c_sub.columns:
-                        step_t_sub = pd.to_numeric(df_c_sub['工步时间(s)'], errors='coerce').fillna(0).values
+                    if '工步时间差(s)' in df_c_sub.columns:
+                        step_t_sub = pd.to_numeric(df_c_sub['工步时间差(s)'], errors='coerce').fillna(0).values
+                    elif '工步时间' in df_c_sub.columns:
+                        step_t_sub = pd.to_numeric(df_c_sub['工步时间'], errors='coerce').fillna(0).values
                     else:
                         step_t_sub = t_sub
                     
@@ -678,10 +709,11 @@ class PlotEngineMixin:
                     df_c_plot['容量（计算）'] = cap_vals
 
                     step_t_df = self.compute_step_time(df_c_plot, cycle_col_name, step_col_name, time_col_name)
-                    if '工步时间(s)' in step_t_df.columns:
-                        df_c_plot['工步时间（计算）'] = step_t_df['工步时间(s)']
-                        df_c_plot['工步时间(s)'] = step_t_df['工步时间(s)']
-                        df_c_plot['工步时间'] = step_t_df['工步时间(s)']
+                    step_time_col = '工步时间差(s)' if '工步时间差(s)' in step_t_df.columns else ('工步时间' if '工步时间' in step_t_df.columns else None)
+                    if step_time_col:
+                        df_c_plot['工步时间（计算）'] = step_t_df[step_time_col]
+                        df_c_plot['工步时间(s)'] = step_t_df[step_time_col]
+                        df_c_plot['工步时间'] = step_t_df[step_time_col]
                     else:
                         df_c_plot['工步时间（计算）'] = t_rel
 
@@ -690,7 +722,7 @@ class PlotEngineMixin:
                         x_col = "容量（计算）"
                     elif x_col in ["循环时间", "循环时间（计算）"]:
                         x_col = "循环时间（计算）"
-                    elif x_col in ["工步时间", "工步时间（计算）", "工步时间(s)"]:
+                    elif x_col in ["工步时间", "工步时间（计算）", "工步时间(s)", "工步时间差(s)"]:
                         x_col = "工步时间（计算）"
 
                     if not x_col or x_col not in df_c_plot.columns:
@@ -713,6 +745,7 @@ class PlotEngineMixin:
                                                **style_props)
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
+                            all_y_plots.extend(df_c_plot[col].dropna().values)
 
                     if y2_data and ax2:
                         color_map = self.color_schemes_dict[self.color_schemes[1].get()]
@@ -728,6 +761,7 @@ class PlotEngineMixin:
                                                **style_props)
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
+                            all_y_plots.extend(df_c_plot[col].dropna().values)
 
                     if y3_data and ax3:
                         color_map = self.color_schemes_dict[self.color_schemes[2].get()]
@@ -743,9 +777,10 @@ class PlotEngineMixin:
                                                **style_props)
                             all_lines.extend(line)
                             all_labels.append(f"C{c}_{cleaned_col}")
+                            all_y_plots.extend(df_c_plot[col].dropna().values)
 
             if plot_type in ['dqdv', 'dvdq']:
-                self.ax.set_xlabel(x_label, fontsize=font_size, fontfamily=font_family, color='black')
+                self.ax.set_xlabel(x_label, fontsize=font_size, fontfamily=font_family, color=current_text_color)
                 
                 # 用户自定义标题
                 user_dqdv_title = self.dqdv_title_var.get().strip()
@@ -753,7 +788,7 @@ class PlotEngineMixin:
                     y_label_str = user_dqdv_title
                 else:
                     y_label_str = "dQ/dV / (Ah/V)" if plot_type == 'dqdv' else "dV/dQ / (V/Ah)"
-                self.ax.set_ylabel(y_label_str, fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
+                self.ax.set_ylabel(y_label_str, fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 
                 # 绘制副 Y 轴/顶 X 轴统计折线 (均值 / 方差 点线图)
                 stat_type = self.dqdv_stat_var.get() if hasattr(self, 'dqdv_stat_var') else "None"
@@ -831,14 +866,14 @@ class PlotEngineMixin:
                 else:
                     default_x_label = x_col_name
 
-                self.ax.set_xlabel(default_x_label, fontsize=font_size, fontfamily=font_family, color='black')
+                self.ax.set_xlabel(default_x_label, fontsize=font_size, fontfamily=font_family, color=current_text_color)
                 
                 # Check user title for comparative regular plot (which is now called "循环Y轴")
                 user_y_title = self.dqdv_title_var.get().strip()
                 if user_y_title:
-                    self.ax.set_ylabel(user_y_title, fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
-                else:
-                    self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
+                    self.ax.set_ylabel(user_y_title, fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
+                elif y1_data:
+                    self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 
                 # Check user limits for comparative regular plot (which is now called "循环Y轴")
                 dqdv_min_str = self.dqdv_min_var.get().strip()
@@ -868,18 +903,9 @@ class PlotEngineMixin:
                         self.ax.set_ylim(bottom=ymin_val)
                     elif ymax_val is not None:
                         self.ax.set_ylim(top=ymax_val)
-                else:
-                    # Fallback to the y_settings[0] limits
-                    try:
-                        ymin = float(self.y_settings[0]['min'].get())
-                        ymax = float(self.y_settings[0]['max'].get())
-                        if ymin < ymax:
-                            self.ax.set_ylim(ymin, ymax)
-                    except Exception:
-                        pass
 
                 if y2_data and ax2:
-                    ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
+                    ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[1]['min'].get())
                         ymax = float(self.y_settings[1]['max'].get())
@@ -889,7 +915,7 @@ class PlotEngineMixin:
                         pass
 
                 if y3_data and ax3:
-                    ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
+                    ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[2]['min'].get())
                         ymax = float(self.y_settings[2]['max'].get())
@@ -1144,6 +1170,31 @@ class PlotEngineMixin:
                         except Exception as e:
                             if hasattr(self, 'logger') and self.logger:
                                 self.logger.error(f"工步筛选异常: {str(e)}")
+
+                # 时长筛选 (tmin ~ tmax)
+                tmin_str = self.time_filter_min_var.get().strip() if hasattr(self, 'time_filter_min_var') else ""
+                tmax_str = self.time_filter_max_var.get().strip() if hasattr(self, 'time_filter_max_var') else ""
+                filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "保留区间"
+                try:
+                    tmin_val = float(tmin_str) if tmin_str else None
+                except ValueError:
+                    tmin_val = None
+                try:
+                    tmax_val = float(tmax_str) if tmax_str else None
+                except ValueError:
+                    tmax_val = None
+
+                if (tmin_val is not None or tmax_val is not None) and cycle_col_name and cycle_col_name in df_to_plot.columns:
+                    candidate_cycles = list(df_to_plot[cycle_col_name].dropna().unique())
+                    kept_cycles, removed_reasons, _ = self.filter_cycles_by_duration(
+                        self.result_df, cycle_col_name, step_col_name, self.time_col.get(),
+                        step_val, tmin_val, tmax_val, filter_mode, target_cycles=candidate_cycles
+                    )
+                    if removed_reasons:
+                        removed_summary = ", ".join([f"C{c} ({reason})" for c, reason in removed_reasons.items()])
+                        self.update_status(f"时间筛选：已过滤剔除 {len(removed_reasons)} 个循环 -> {removed_summary}")
+                    
+                    df_to_plot = df_to_plot[df_to_plot[cycle_col_name].isin(kept_cycles)]
             
             if df_to_plot.empty:
                 self.ax.clear()
@@ -1261,7 +1312,7 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
+                self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[0]['min'].get())
                     ymax = float(self.y_settings[0]['max'].get())
@@ -1298,7 +1349,7 @@ class PlotEngineMixin:
                     y2_labels_temp.append(cleaned_label)
                 all_lines.extend(y2_lines_temp)
                 all_labels.extend(y2_labels_temp)
-                ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
+                ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[1]['min'].get())
                     ymax = float(self.y_settings[1]['max'].get())
@@ -1324,7 +1375,7 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color='black', labelpad=label_pad_val)
+                ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[2]['min'].get())
                     ymax = float(self.y_settings[2]['max'].get())
@@ -1369,7 +1420,7 @@ class PlotEngineMixin:
                     leg3 = self.ax.legend(y3_lines, y3_labels, loc='upper left', bbox_to_anchor=(positions[2], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
                     self.ax.add_artist(leg3)
                     
-            self.ax.set_xlabel(self.x_title.get(), fontsize=font_size, fontfamily=font_family, color='black')
+            self.ax.set_xlabel(self.x_title.get(), fontsize=font_size, fontfamily=font_family, color=current_text_color)
                     
             try:
                 self.ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 6))

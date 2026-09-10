@@ -287,7 +287,7 @@ class CanvasResizeFilter(QObject):
 class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot v1.0.7")
+        self.setWindowTitle("DataPlot v1.0.8")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -297,9 +297,11 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.CHUNK_SIZE = 100000
         self.msg_queue = queue.Queue()
         
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_path = os.path.join(script_dir, 'DataPlot.log')
         # 设置日志（指定 UTF-8 编码防止中文乱码）
         logging.basicConfig(
-            filename='DataPlot.log',
+            filename=log_path,
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             encoding='utf-8'
@@ -339,7 +341,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.marker_size_var = Var("5")
         self.markevery_var = Var("1")
         
-        self.version = "1.0.7"
+        self.version = "1.0.8"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False
@@ -389,6 +391,9 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         self.cycle_filter = Var("全部")
         self.step_filter = Var("全部")
+        self.time_filter_min_var = Var("")
+        self.time_filter_max_var = Var("")
+        self.time_filter_mode_var = Var("保留区间")
         
         self.font_family = Var("Microsoft YaHei")
         self.legend_y = Var("1.02")
@@ -827,6 +832,44 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         bind_combobox(self.step_filter_combo, self.step_filter)
         self.step_filter_combo.currentIndexChanged.connect(lambda: self.on_step_filter_changed())
         battery_grid.addWidget(self.step_filter_combo, 2, 3)
+
+        # Row 2, Col 4-5: 时长筛选 (tmin ~ tmax 与模式选择)
+        battery_grid.addWidget(QLabel("时长筛选:"), 2, 4)
+        time_filter_widget = QWidget()
+        time_filter_lay = QHBoxLayout(time_filter_widget)
+        time_filter_lay.setContentsMargins(0, 0, 0, 0)
+        time_filter_lay.setSpacing(2)
+
+        self.time_filter_min_entry = QLineEdit()
+        self.time_filter_min_entry.setPlaceholderText("tmin")
+        self.time_filter_min_entry.setToolTip("最小时间/s（工步选具体时为工步时长，选全部时为循环时长）")
+        self.time_filter_min_entry.setFixedWidth(38)
+        bind_lineedit(self.time_filter_min_entry, self.time_filter_min_var)
+        self.time_filter_min_entry.textChanged.connect(lambda: self.delayed_update())
+        self.time_filter_min_entry.returnPressed.connect(lambda: self.delayed_update())
+        time_filter_lay.addWidget(self.time_filter_min_entry)
+
+        time_filter_lay.addWidget(QLabel("~"))
+
+        self.time_filter_max_entry = QLineEdit()
+        self.time_filter_max_entry.setPlaceholderText("tmax")
+        self.time_filter_max_entry.setToolTip("最大时间/s（工步选具体时为工步时长，选全部时为循环时长）")
+        self.time_filter_max_entry.setFixedWidth(38)
+        bind_lineedit(self.time_filter_max_entry, self.time_filter_max_var)
+        self.time_filter_max_entry.textChanged.connect(lambda: self.delayed_update())
+        self.time_filter_max_entry.returnPressed.connect(lambda: self.delayed_update())
+        time_filter_lay.addWidget(self.time_filter_max_entry)
+
+        self.time_filter_mode_combo = CustomComboBox()
+        self.time_filter_mode_combo.addItems(["保留区间", "< tmin", "> tmax", "区间外"])
+        bind_combobox(self.time_filter_mode_combo, self.time_filter_mode_var)
+        self.time_filter_mode_combo.setToolTip("时长筛选模式：保留区间(tmin~tmax)、小于tmin、大于tmax、区间外(反向)")
+        self.time_filter_mode_combo.setFixedWidth(72)
+        self.time_filter_mode_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+        time_filter_lay.addWidget(self.time_filter_mode_combo)
+        time_filter_lay.addStretch()
+
+        battery_grid.addWidget(time_filter_widget, 2, 5)
         
         battery_box_lay = QVBoxLayout(self.battery_filter_frame)
         battery_box_lay.setContentsMargins(10, 0, 10, 10)
@@ -2052,25 +2095,30 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             self.update_status(f"更新列表失败: {str(e)}")
 
     def reset_plot_config(self):
-        self.legend_visible.set(True)
-        self.legend_y.set("1.02")
-        self.legend_x_positions_str.set("0, 0.3, 0.6")
+        """重置图表与图例配置参数"""
+        self.font_family.set("Microsoft YaHei")
+        self.font_size.set("18")
         self.legend_font_size.set("18")
         self.legend_cols.set("1")
         self.frame_width.set("1.5")
         self.line_width.set("1.5")
-        self.font_size.set("18")
-        
-        # Color schemes & line styles defaults
-        if len(self.color_schemes) >= 3:
-            self.color_schemes[0].set("Tab10")
-            self.color_schemes[1].set("Set1")
-            self.color_schemes[2].set("Dark2")
+        self.legend_visible.set(True)
+        self.legend_y.set("1.02")
+        self.legend_x_positions_str.set("0, 0.3, 0.7")
         if len(self.line_styles) >= 3:
             self.line_styles[0].set("实线")
             self.line_styles[1].set("虚线")
             self.line_styles[2].set("点划线")
-            
+        if len(self.color_schemes) >= 3:
+            self.color_schemes[0].set("Tab10")
+            self.color_schemes[1].set("Set1")
+            self.color_schemes[2].set("Dark2")
+        if len(self.markers) >= 3:
+            self.markers[0].set("无")
+            self.markers[1].set("无")
+            self.markers[2].set("无")
+        self.marker_size_var.set("5")
+        self.markevery_var.set("1")
         self.update_font_and_plot()
 
     def update_panel_font(self):
@@ -2439,32 +2487,6 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.on_canvas_width_entry_changed()
         if hasattr(self, 'apply_canvas_background'):
             self.apply_canvas_background()
-        self.update_plot()
-    def reset_plot_config(self):
-        """重置图表与图例配置参数"""
-        self.font_family.set("Microsoft YaHei")
-        self.font_size.set("18")
-        self.legend_font_size.set("18")
-        self.legend_cols.set("1")
-        self.frame_width.set("1.5")
-        self.line_width.set("1.5")
-        self.legend_visible.set(True)
-        self.legend_y.set("1.02")
-        self.legend_x_positions_str.set("0, 0.3, 0.7")
-        if len(self.line_styles) >= 3:
-            self.line_styles[0].set("实线")
-            self.line_styles[1].set("虚线")
-            self.line_styles[2].set("点划线")
-        if len(self.color_schemes) >= 3:
-            self.color_schemes[0].set("Default")
-            self.color_schemes[1].set("Default")
-            self.color_schemes[2].set("Default")
-        if len(self.markers) >= 3:
-            self.markers[0].set("无")
-            self.markers[1].set("无")
-            self.markers[2].set("无")
-        self.marker_size_var.set("5")
-        self.markevery_var.set("1")
         self.update_plot()
 
     def reset_advanced_settings(self):

@@ -1,5 +1,13 @@
 import json
 import os
+import sys
+
+def get_settings_file_path():
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, 'settings.json')
 
 class SettingsMixin:
     def save_settings(self):
@@ -15,10 +23,12 @@ class SettingsMixin:
         if not browse_dir:
             browse_dir = os.path.abspath(".")
 
+        settings_path = get_settings_file_path()
+
         # 读取现有 settings.json 中保存的布局尺寸，默认保留不变
         existing_pw, existing_cw = 560, 1000
         try:
-            with open('settings.json', 'r', encoding='utf-8') as f:
+            with open(settings_path, 'r', encoding='utf-8') as f:
                 existing = json.load(f)
                 existing_pw = existing.get('panel_width', 560)
                 existing_cw = existing.get('canvas_width', 1000)
@@ -102,6 +112,11 @@ class SettingsMixin:
             'dqdv_mode': self.dqdv_mode_var.get() if hasattr(self, 'dqdv_mode_var') else '去重',
             'filter_type': self.filter_type_var.get() if hasattr(self, 'filter_type_var') else '无',
             'merge_sheets': self.merge_sheets_var.get() if hasattr(self, 'merge_sheets_var') else False,
+
+            # Time duration filter settings
+            'time_filter_min': self.time_filter_min_var.get() if hasattr(self, 'time_filter_min_var') else '',
+            'time_filter_max': self.time_filter_max_var.get() if hasattr(self, 'time_filter_max_var') else '',
+            'time_filter_mode': self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else '保留区间',
             
             # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
@@ -113,7 +128,7 @@ class SettingsMixin:
             'last_browse_dir': browse_dir
         }
         try:
-            with open('settings.json', 'w', encoding='utf-8') as f:
+            with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=4, ensure_ascii=False)
         except Exception as e:
             self.logger.error(f"保存设置失败: {str(e)}")
@@ -121,8 +136,9 @@ class SettingsMixin:
     def load_settings(self):
         """加载保存的设置"""
         self._is_loading_settings = True
+        settings_path = get_settings_file_path()
         try:
-            with open('settings.json', 'r', encoding='utf-8') as f:
+            with open(settings_path, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
                 self.font_family.set(settings.get('font_family', 'Microsoft YaHei'))
                 self.font_size.set(settings.get('font_size', '18'))
@@ -174,6 +190,13 @@ class SettingsMixin:
                     self.filter_type_var.set(settings.get('filter_type', '无'))
                 if hasattr(self, 'merge_sheets_var'):
                     self.merge_sheets_var.set(settings.get('merge_sheets', False))
+
+                if hasattr(self, 'time_filter_min_var'):
+                    self.time_filter_min_var.set(settings.get('time_filter_min', ''))
+                if hasattr(self, 'time_filter_max_var'):
+                    self.time_filter_max_var.set(settings.get('time_filter_max', ''))
+                if hasattr(self, 'time_filter_mode_var'):
+                    self.time_filter_mode_var.set(settings.get('time_filter_mode', '保留区间'))
                 
                 # Load X & Y axes configs
                 self.x_min_var.set(settings.get('x_min', ''))
