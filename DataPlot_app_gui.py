@@ -737,7 +737,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         input_grid.addWidget(sub_param_widget, 2, 0, 1, 2)
         
-        self.csv2xlsx_btn = QPushButton("csv2xlsx")
+        self.csv2xlsx_btn = QPushButton("csv2xls")
         self.csv2xlsx_btn.setFixedWidth(75)
         self.csv2xlsx_btn.clicked.connect(self.convert_csv_to_xlsx)
         input_grid.addWidget(self.csv2xlsx_btn, 2, 2)
