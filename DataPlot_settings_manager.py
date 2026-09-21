@@ -63,6 +63,15 @@ class SettingsMixin:
             'x_min': self.x_min_var.get(),
             'x_max': self.x_max_var.get(),
             'x_title': self.x_title.get() if hasattr(self, 'x_title') else 'Time/s',
+            'x1_min': self.x_settings[0]['min'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else '',
+            'x1_max': self.x_settings[0]['max'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else '',
+            'x1_title': self.x_settings[0]['title'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else 'Time/s',
+            'x2_min': self.x_settings[1]['min'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 1 else '',
+            'x2_max': self.x_settings[1]['max'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 1 else '',
+            'x2_title': self.x_settings[1]['title'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 1 else 'Time/s',
+            'x3_min': self.x_settings[2]['min'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 2 else '',
+            'x3_max': self.x_settings[2]['max'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 2 else '',
+            'x3_title': self.x_settings[2]['title'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 2 else 'Time/s',
             
             'y1_min': self.y_settings[0]['min'].get() if len(self.y_settings) > 0 else '20',
             'y1_max': self.y_settings[0]['max'].get() if len(self.y_settings) > 0 else '60',
@@ -116,7 +125,7 @@ class SettingsMixin:
             # Time duration filter settings
             'time_filter_min': self.time_filter_min_var.get() if hasattr(self, 'time_filter_min_var') else '',
             'time_filter_max': self.time_filter_max_var.get() if hasattr(self, 'time_filter_max_var') else '',
-            'time_filter_mode': self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else '保留区间',
+            'time_filter_mode': self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else '区间内',
             
             # Panel font, background and layout width/height configurations
             'panel_font_family': self.panel_font_family.get() if hasattr(self, 'panel_font_family') else 'Microsoft YaHei',
@@ -196,13 +205,29 @@ class SettingsMixin:
                 if hasattr(self, 'time_filter_max_var'):
                     self.time_filter_max_var.set(settings.get('time_filter_max', ''))
                 if hasattr(self, 'time_filter_mode_var'):
-                    self.time_filter_mode_var.set(settings.get('time_filter_mode', '保留区间'))
+                    mode_val = settings.get('time_filter_mode', '区间内')
+                    if mode_val == '保留区间':
+                        mode_val = '区间内'
+                    self.time_filter_mode_var.set(mode_val)
                 
                 # Load X & Y axes configs
                 self.x_min_var.set(settings.get('x_min', ''))
                 self.x_max_var.set(settings.get('x_max', ''))
                 if hasattr(self, 'x_title') and 'x_title' in settings:
                     self.x_title.setText(settings['x_title'])
+                if hasattr(self, 'x_settings'):
+                    if len(self.x_settings) > 0:
+                        self.x_settings[0]['min'].set(settings.get('x1_min', settings.get('x_min', '')))
+                        self.x_settings[0]['max'].set(settings.get('x1_max', settings.get('x_max', '')))
+                        self.x_settings[0]['title'].set(settings.get('x1_title', settings.get('x_title', 'Time/s')))
+                    if len(self.x_settings) > 1:
+                        self.x_settings[1]['min'].set(settings.get('x2_min', ''))
+                        self.x_settings[1]['max'].set(settings.get('x2_max', ''))
+                        self.x_settings[1]['title'].set(settings.get('x2_title', 'Time/s'))
+                    if len(self.x_settings) > 2:
+                        self.x_settings[2]['min'].set(settings.get('x3_min', ''))
+                        self.x_settings[2]['max'].set(settings.get('x3_max', ''))
+                        self.x_settings[2]['title'].set(settings.get('x3_title', 'Time/s'))
                 
                 if len(self.y_settings) > 0:
                     self.y_settings[0]['min'].set(settings.get('y1_min', '20'))

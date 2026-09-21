@@ -687,6 +687,145 @@ class DataLoaderMixin:
             error_msg = f"保存 Excel 失败: {str(e)}"
             self.logger.error(error_msg)
             self.msg_queue.put({'type': 'error', 'message': error_msg})
+    def clean_and_export_floefd(self):
+        """读取指定 FLOEFD sheet 文件，按照 SKIP、NULL 清洗数据，并按照 FLOEFD 模式点击保存的格式输出至 FLOEFD_Plot_Data.xlsx"""
+        file_path = self.file_path.get()
+        if not file_path or not os.path.exists(file_path):
+            QMessageBox.warning(self, "警告", "请先选择有效的 FLOEFD 输入文件！")
+            return
+            
+        sheet_name = self.sheet_name.get()
+        if not sheet_name:
+            QMessageBox.warning(self, "警告", "请先选择需要清洗的表格名称(Sheet)！")
+            return
+            
+        try:
+            try:
+                skip_rows = int(self.skip_rows_var.get())
+            except ValueError:
+                skip_rows = 3
+            try:
+                start_skip = int(self.start_skip_var.get())
+            except ValueError:
+                start_skip = 8
+
+            self.set_buttons_state(False)
+            self.update_status(f"正在后台清洗并导出 FLOEFD 数据: {os.path.basename(file_path)} [{sheet_name}]...")
+            
+            threading.Thread(
+                target=self._bg_clean_and_export_floefd,
+                args=(file_path, sheet_name, skip_rows, start_skip),
+                daemon=True
+            ).start()
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"启动清洗导出线程失败: {str(e)}")
+            self.set_buttons_state(True)
+
+    def _bg_clean_and_export_floefd(self, file_path, sheet_name, skip_rows, start_skip):
+        try:
+            start_time = time.time()
+            df = self._read_single_or_multi_excel_sheet(file_path, sheet_name, skiprows=skip_rows)
+            
+            if start_skip > 0:
+                df = df.iloc[start_skip:].reset_index(drop=True)
+                
+            def clean_column_name(col):
+                col = str(col)
+                if '（' not in col and '(' not in col:
+                    return col
+                parts = col.split()
+                if len(parts) > 1 and parts[-1].isdigit():
+                    number = parts[-1]
+                    prefix = ' '.join(parts[:-1])
+                    if '（' in prefix or '(' in prefix:
+                        pos1 = prefix.find('（')
+                        pos2 = prefix.find('(')
+                        if pos1 == -1: pos1 = len(prefix)
+                        if pos2 == -1: pos2 = len(prefix)
+                        pos = min(pos1, pos2)
+                        prefix = prefix[:pos]
+                    return f"{prefix.strip()} {number}"
+                else:
+                    pos1 = col.find('（')
+                    pos2 = col.find('(')
+                    if pos1 == -1: pos1 = len(col)
+                    if pos2 == -1: pos2 = len(col)
+                    pos = min(pos1, pos2)
+                    return col[:pos].strip()
+
+            df.columns = [clean_column_name(col) for col in df.columns]
+            
+            result_df = pd.DataFrame()
+            result_df['Time'] = df.iloc[:, 0]
+            
+            for col_idx in range(1, len(df.columns)):
+                col = df.columns[col_idx]
+                col_str = str(col).lower().strip()
+                if 'unnamed' in col_str or col_str == '':
+                    continue
+                if any(x in col_str for x in ['时间', 'time', 'ʱ', '[s]', '(s)']):
+                    continue
+                result_df[col] = df.iloc[:, col_idx]
+                
+            for col in result_df.columns:
+                result_df[col] = pd.to_numeric(result_df[col], errors='coerce')
+                
+            # 清洗列名为保存格式（去除“温度”等冗余后缀）
+            save_df = result_df.copy()
+            cleaned_cols = []
+            for col in save_df.columns:
+                if col == 'Time':
+                    cleaned_cols.append('Time')
+                else:
+                    c = self.clean_legend_label(col) if hasattr(self, 'clean_legend_label') else col
+                    cleaned_cols.append(c)
+            save_df.columns = cleaned_cols
+            
+            # 确定保存文件路径（参考 save_plot_data 的保存数据格式）
+            save_dir = os.path.dirname(os.path.abspath(file_path)) if file_path else "."
+            file_name = os.path.join(save_dir, "FLOEFD_Plot_Data.xlsx")
+            
+            next_sheet = "sheet1"
+            if os.path.exists(file_name):
+                try:
+                    wb = openpyxl.load_workbook(file_name, read_only=True, keep_links=False)
+                    sheet_names = wb.sheetnames
+                    wb.close()
+                    
+                    import re
+                    max_num = 0
+                    for name in sheet_names:
+                        match = re.match(r'^sheet(\d+)$', name, re.IGNORECASE)
+                        if match:
+                            num = int(match.group(1))
+                            if num > max_num:
+                                max_num = num
+                    next_sheet = f"sheet{max_num + 1}"
+                except Exception as e:
+                    if hasattr(self, 'logger') and self.logger:
+                        self.logger.error(f"读取已有 Excel 的 sheet 结构失败: {str(e)}")
+            
+            if os.path.exists(file_name):
+                with pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                    save_df.to_excel(writer, sheet_name=next_sheet, index=False)
+            else:
+                with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
+                    save_df.to_excel(writer, sheet_name=next_sheet, index=False)
+                    
+            elapsed = time.time() - start_time
+            msg = f"FLOEFD 数据清洗完成并保存至：\n{os.path.abspath(file_name)} 中的 {next_sheet}\n写入 {len(save_df):,} 行，耗时: {elapsed:.2f}秒"
+            self.msg_queue.put({'type': 'status', 'message': f"数据清洗完成并保存至 {os.path.basename(file_name)} [{next_sheet}]"})
+            
+            # 同时更新 UI 内存数据供绘图
+            self.msg_queue.put({'type': 'raw_done', 'df': result_df, 'message': "数据读取与清洗完成"})
+            
+            QTimer.singleShot(0, lambda: QMessageBox.information(self, "成功", msg))
+        except Exception as e:
+            error_msg = f"FLOEFD 数据清洗保存失败: {str(e)}"
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(error_msg)
+            self.msg_queue.put({'type': 'error', 'message': error_msg})
             QTimer.singleShot(0, lambda: QMessageBox.critical(self, "错误", error_msg))
         finally:
             QTimer.singleShot(0, lambda: self.set_buttons_state(True))
+

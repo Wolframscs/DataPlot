@@ -35,10 +35,10 @@ class ExcelExporterMixin:
 
             step_val = self.step_filter.get()
 
-            # 时长筛选 (tmin ~ tmax)
+            # 时间筛选 (tmin ~ tmax)
             tmin_str = self.time_filter_min_var.get().strip() if hasattr(self, 'time_filter_min_var') else ""
             tmax_str = self.time_filter_max_var.get().strip() if hasattr(self, 'time_filter_max_var') else ""
-            filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "保留区间"
+            filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "区间内"
             try:
                 tmin_val = float(tmin_str) if tmin_str else None
             except ValueError:
@@ -405,10 +405,10 @@ class ExcelExporterMixin:
                 cycle_val = self.cycle_filter.get()
                 step_val = self.step_filter.get()
 
-                # 时长筛选 (tmin ~ tmax)
+                # 时间筛选 (tmin ~ tmax)
                 tmin_str = self.time_filter_min_var.get().strip() if hasattr(self, 'time_filter_min_var') else ""
                 tmax_str = self.time_filter_max_var.get().strip() if hasattr(self, 'time_filter_max_var') else ""
-                filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "保留区间"
+                filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "区间内"
                 try:
                     tmin_val = float(tmin_str) if tmin_str else None
                 except ValueError:
@@ -460,8 +460,15 @@ class ExcelExporterMixin:
                 return
                 
             selected_cols = []
-            if x_col and x_col in df_to_plot.columns:
-                selected_cols.append(x_col)
+            if self.file_type.get() == "processed" and hasattr(self, 'x_settings'):
+                for i in range(3):
+                    if i < len(self.y_selections) and self.y_selections[i]:
+                        xcol = self.x_settings[i]['col'].get() if i < len(self.x_settings) else ""
+                        if xcol and xcol in df_to_plot.columns and xcol not in selected_cols:
+                            selected_cols.append(xcol)
+            else:
+                if x_col and x_col in df_to_plot.columns:
+                    selected_cols.append(x_col)
             for col in all_y_cols:
                 if col and col in df_to_plot.columns and col not in selected_cols:
                     selected_cols.append(col)

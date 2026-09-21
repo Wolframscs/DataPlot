@@ -180,11 +180,11 @@ class BatteryMathMixin:
             df['工步时间差(s)'] = 0.0
             return df
 
-    def filter_cycles_by_duration(self, df, cycle_col, step_col, time_col, step_filter_val, tmin_val, tmax_val, filter_mode="保留区间", target_cycles=None):
+    def filter_cycles_by_duration(self, df, cycle_col, step_col, time_col, step_filter_val, tmin_val, tmax_val, filter_mode="区间内", target_cycles=None):
         """
         根据工步或循环的总持续时间(Duration)筛选保留或剔除循环：
         - step_filter_val: 具体工步（如 '3' 或 '恒功率放'）时针对该工步总时长；为 '全部' 或 '' 时针对该循环总时长。
-        - filter_mode: '保留区间' (tmin <= T <= tmax), '< tmin', '> tmax', '区间外' (T < tmin 或 T > tmax)。
+        - filter_mode: '区间内' (tmin <= T <= tmax), '< tmin', '> tmax', '区间外' (T < tmin 或 T > tmax)。
         返回: (kept_cycles, removed_reasons_dict, duration_dict)
         """
         if df is None or df.empty or not cycle_col or cycle_col not in df.columns:

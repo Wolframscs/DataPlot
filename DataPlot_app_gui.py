@@ -119,7 +119,20 @@ class CustomListWidget(QListWidget):
 
     def _show_context_menu(self, pos):
         item = self.itemAt(pos)
+        if item and not item.isSelected():
+            selected_items = [self.item(i) for i in range(self.count()) if self.item(i).isSelected()]
+            if not selected_items:
+                item.setSelected(True)
+                self._on_selection_changed()
+
+        selected_items = [self.item(i) for i in range(self.count()) if self.item(i).isSelected()]
         menu = QMenu(self)
+        if selected_items:
+            rename_text = f"✏️ 重命名 ({len(selected_items)}项)" if len(selected_items) > 1 else "✏️ 重命名"
+            action_rename = menu.addAction(rename_text)
+            action_rename.triggered.connect(self._rename_selected_items)
+            menu.addSeparator()
+
         if item and item.isSelected():
             action_deselect = menu.addAction("✖ 取消选择此项")
             action_deselect.triggered.connect(lambda: (item.setSelected(False), self._on_selection_changed()))
@@ -128,6 +141,58 @@ class CustomListWidget(QListWidget):
         action_clear = menu.addAction("🗑 清空当前列表")
         action_clear.triggered.connect(self.clearSelection)
         menu.exec(self.mapToGlobal(pos))
+
+    def _rename_selected_items(self):
+        selected_items = [self.item(i) for i in range(self.count()) if self.item(i).isSelected()]
+        if not selected_items:
+            return
+            
+        import re
+        from PySide6.QtWidgets import QInputDialog, QLineEdit
+        
+        count = len(selected_items)
+        first_text = selected_items[0].text()
+        
+        if count == 1:
+            title = "重命名列"
+            label = "请输入新的列名:"
+            default_text = first_text
+        else:
+            title = f"批量重命名 ({count} 列)"
+            label = f"已选定 {count} 列数据。\n请输入基础名称（如输入 P#1，后续列将自动递增为 P#2, P#3...）："
+            default_text = first_text
+            
+        new_name_input, ok = QInputDialog.getText(self, title, label, QLineEdit.Normal, default_text)
+        if not ok or not new_name_input.strip():
+            return
+            
+        new_name_input = new_name_input.strip()
+        
+        rename_map = {}
+        if count == 1:
+            rename_map[selected_items[0].text()] = new_name_input
+        else:
+            m = re.search(r'^(.*?)(\d+)$', new_name_input)
+            if m:
+                prefix = m.group(1)
+                start_num = int(m.group(2))
+                pad = len(m.group(2))
+                for idx, item in enumerate(selected_items):
+                    old_name = item.text()
+                    cur_num = start_num + idx
+                    target_name = f"{prefix}{cur_num:0{pad}d}"
+                    rename_map[old_name] = target_name
+            else:
+                sep = "" if new_name_input.endswith(('#', '_', '-')) else "_"
+                for idx, item in enumerate(selected_items):
+                    old_name = item.text()
+                    target_name = f"{new_name_input}{sep}{idx + 1}"
+                    rename_map[old_name] = target_name
+                    
+        # 通知主窗口执行重命名并刷新
+        main_win = self.window()
+        if hasattr(main_win, 'rename_data_columns'):
+            main_win.rename_data_columns(rename_map)
 
     def _invert_selection(self):
         for i in range(self.count()):
@@ -287,7 +352,7 @@ class CanvasResizeFilter(QObject):
 class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot v1.0.8")
+        self.setWindowTitle("DataPlot v1.0.9")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -341,7 +406,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.marker_size_var = Var("5")
         self.markevery_var = Var("1")
         
-        self.version = "1.0.8"
+        self.version = "1.0.9"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False
@@ -352,8 +417,16 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.max_plot_points = Var("None")
         self.legend_font_size = Var("18")
         self.legend_cols = Var("1")
-        self.x_min_var = Var("")
-        self.x_max_var = Var("")
+        self.x_settings = []
+        for i in range(3):
+            self.x_settings.append({
+                'col': Var(""),
+                'min': Var(""),
+                'max': Var(""),
+                'title': Var("Time/s")
+            })
+        self.x_min_var = self.x_settings[0]['min']
+        self.x_max_var = self.x_settings[0]['max']
         
         self.file_type = Var("raw")
         self.file_path = Var("")
@@ -387,13 +460,13 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.dqdv_mode_var = Var("去重")
         self.voltage_scale_var = Var("1")
         self.current_scale_var = Var("1")
-        self.x_axis = Var("")
+        self.x_axis = self.x_settings[0]['col']
         
         self.cycle_filter = Var("全部")
         self.step_filter = Var("全部")
         self.time_filter_min_var = Var("")
         self.time_filter_max_var = Var("")
-        self.time_filter_mode_var = Var("保留区间")
+        self.time_filter_mode_var = Var("区间内")
         
         self.font_family = Var("Microsoft YaHei")
         self.legend_y = Var("1.02")
@@ -694,51 +767,58 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         self.sheet_select_btn = QPushButton("多选...")
         self.sheet_select_btn.setToolTip("勾选并合并 Excel 中的任意一个或多个 Sheet")
-        self.sheet_select_btn.setFixedWidth(75)
+        self.sheet_select_btn.setFixedWidth(70)
         self.sheet_select_btn.clicked.connect(self.open_multi_sheet_dialog)
         sheet_layout.addWidget(self.sheet_select_btn, 0)
         
-        input_grid.addWidget(sheet_container, 1, 1)
-        
         self.process_btn = QPushButton("读取")
-        self.process_btn.setFixedWidth(75)
+        self.process_btn.setFixedWidth(60)
         self.process_btn.clicked.connect(self.process_data)
-        input_grid.addWidget(self.process_btn, 1, 2)
+        sheet_layout.addWidget(self.process_btn, 0)
+        
+        self.floefd_clear_btn = QPushButton("清洗")
+        self.floefd_clear_btn.setFixedWidth(60)
+        self.floefd_clear_btn.setToolTip("读取指定的 FLOEFD Sheet 并按 SKIP、NULL 清洗数据后保存至 FLOEFD_Plot_Data.xlsx")
+        self.floefd_clear_btn.clicked.connect(self.clean_and_export_floefd)
+        sheet_layout.addWidget(self.floefd_clear_btn, 0)
+        
+        input_grid.addWidget(sheet_container, 1, 1, 1, 2)
         
         # Row 2: Sub-parameters (IniRow, SKIP, NULL, 数据上限)
         sub_param_widget = QWidget()
         sub_param_layout = QHBoxLayout(sub_param_widget)
         sub_param_layout.setContentsMargins(0, 0, 0, 0)
+        sub_param_layout.setSpacing(4)
         
         sub_param_layout.addWidget(QLabel("IniRow:"))
         self.start_row_entry = QLineEdit()
-        self.start_row_entry.setFixedWidth(40)
+        self.start_row_entry.setMinimumWidth(35)
         bind_lineedit(self.start_row_entry, self.start_row)
-        sub_param_layout.addWidget(self.start_row_entry)
+        sub_param_layout.addWidget(self.start_row_entry, 1)
         
         self.skip_label = QLabel("SKIP:")
         self.skip_entry = QLineEdit()
-        self.skip_entry.setFixedWidth(40)
+        self.skip_entry.setMinimumWidth(35)
         bind_lineedit(self.skip_entry, self.skip_rows_var)
         sub_param_layout.addWidget(self.skip_label)
-        sub_param_layout.addWidget(self.skip_entry)
+        sub_param_layout.addWidget(self.skip_entry, 1)
         
         self.null_label = QLabel("NULL:")
         self.null_entry = QLineEdit()
-        self.null_entry.setFixedWidth(40)
+        self.null_entry.setMinimumWidth(35)
         bind_lineedit(self.null_entry, self.start_skip_var)
         sub_param_layout.addWidget(self.null_label)
-        sub_param_layout.addWidget(self.null_entry)
+        sub_param_layout.addWidget(self.null_entry, 1)
         
         # Add "数据上限" next to NULL
         self.max_plot_points_label = QLabel("上限:")
         self.max_plot_points_combo = CustomComboBox()
         self.max_plot_points_combo.addItems(["5e4", "10e4", "20e4", "50e4", "100e4", "None"])
-        self.max_plot_points_combo.setFixedWidth(70)
+        self.max_plot_points_combo.setMinimumWidth(75)
         bind_combobox(self.max_plot_points_combo, self.max_plot_points)
         self.max_plot_points_combo.currentIndexChanged.connect(lambda: self.update_plot())
         sub_param_layout.addWidget(self.max_plot_points_label)
-        sub_param_layout.addWidget(self.max_plot_points_combo)
+        sub_param_layout.addWidget(self.max_plot_points_combo, 1)
         
         input_grid.addWidget(sub_param_widget, 2, 0, 1, 2)
         
@@ -762,6 +842,9 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         battery_content = QWidget()
         battery_grid = QGridLayout(battery_content)
         battery_grid.setContentsMargins(0, 5, 0, 0)
+        battery_grid.setColumnStretch(1, 1)
+        battery_grid.setColumnStretch(3, 1)
+        battery_grid.setColumnStretch(5, 1)
         
         # Row 0: Voltage Column, Current Column, Scale
         battery_grid.addWidget(QLabel("电压列:"), 0, 0)
@@ -776,7 +859,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.current_col_combo.currentIndexChanged.connect(lambda: self.delayed_update())
         battery_grid.addWidget(self.current_col_combo, 0, 3)
         
-        battery_grid.addWidget(QLabel("比例:"), 0, 4)
+        battery_grid.addWidget(QLabel("比例因子:"), 0, 4)
         scale_widget = QWidget()
         scale_layout = QHBoxLayout(scale_widget)
         scale_layout.setContentsMargins(0, 0, 0, 0)
@@ -833,8 +916,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.step_filter_combo.currentIndexChanged.connect(lambda: self.on_step_filter_changed())
         battery_grid.addWidget(self.step_filter_combo, 2, 3)
 
-        # Row 2, Col 4-5: 时长筛选 (tmin ~ tmax 与模式选择)
-        battery_grid.addWidget(QLabel("时长筛选:"), 2, 4)
+        # Row 2, Col 4-5: 时间筛选 (tmin ~ tmax 与模式选择)
+        battery_grid.addWidget(QLabel("时间筛选:"), 2, 4)
         time_filter_widget = QWidget()
         time_filter_lay = QHBoxLayout(time_filter_widget)
         time_filter_lay.setContentsMargins(0, 0, 0, 0)
@@ -843,31 +926,30 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.time_filter_min_entry = QLineEdit()
         self.time_filter_min_entry.setPlaceholderText("tmin")
         self.time_filter_min_entry.setToolTip("最小时间/s（工步选具体时为工步时长，选全部时为循环时长）")
-        self.time_filter_min_entry.setFixedWidth(38)
+        self.time_filter_min_entry.setMinimumWidth(30)
         bind_lineedit(self.time_filter_min_entry, self.time_filter_min_var)
         self.time_filter_min_entry.textChanged.connect(lambda: self.delayed_update())
         self.time_filter_min_entry.returnPressed.connect(lambda: self.delayed_update())
-        time_filter_lay.addWidget(self.time_filter_min_entry)
+        time_filter_lay.addWidget(self.time_filter_min_entry, 1)
 
-        time_filter_lay.addWidget(QLabel("~"))
+        time_filter_lay.addWidget(QLabel("~"), 0)
 
         self.time_filter_max_entry = QLineEdit()
         self.time_filter_max_entry.setPlaceholderText("tmax")
         self.time_filter_max_entry.setToolTip("最大时间/s（工步选具体时为工步时长，选全部时为循环时长）")
-        self.time_filter_max_entry.setFixedWidth(38)
+        self.time_filter_max_entry.setMinimumWidth(30)
         bind_lineedit(self.time_filter_max_entry, self.time_filter_max_var)
         self.time_filter_max_entry.textChanged.connect(lambda: self.delayed_update())
         self.time_filter_max_entry.returnPressed.connect(lambda: self.delayed_update())
-        time_filter_lay.addWidget(self.time_filter_max_entry)
+        time_filter_lay.addWidget(self.time_filter_max_entry, 1)
 
         self.time_filter_mode_combo = CustomComboBox()
-        self.time_filter_mode_combo.addItems(["保留区间", "< tmin", "> tmax", "区间外"])
+        self.time_filter_mode_combo.addItems(["区间内", "< tmin", "> tmax", "区间外"])
         bind_combobox(self.time_filter_mode_combo, self.time_filter_mode_var)
-        self.time_filter_mode_combo.setToolTip("时长筛选模式：保留区间(tmin~tmax)、小于tmin、大于tmax、区间外(反向)")
-        self.time_filter_mode_combo.setFixedWidth(72)
+        self.time_filter_mode_combo.setToolTip("时间筛选模式：区间内(tmin~tmax)、小于tmin、大于tmax、区间外(反向)")
+        self.time_filter_mode_combo.setFixedWidth(70)
         self.time_filter_mode_combo.currentIndexChanged.connect(lambda: self.delayed_update())
-        time_filter_lay.addWidget(self.time_filter_mode_combo)
-        time_filter_lay.addStretch()
+        time_filter_lay.addWidget(self.time_filter_mode_combo, 0)
 
         battery_grid.addWidget(time_filter_widget, 2, 5)
         
@@ -980,28 +1062,37 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         compare_y_widget = QWidget()
         compare_y_layout = QHBoxLayout(compare_y_widget)
         compare_y_layout.setContentsMargins(0, 0, 0, 0)
+        compare_y_layout.setSpacing(4)
         
-        compare_y_layout.addWidget(QLabel("Min:"))
+        lbl_ymin = QLabel("Ymin:")
+        lbl_ymin.setFixedWidth(38)
+        compare_y_layout.addWidget(lbl_ymin)
         self.dqdv_min_entry = QLineEdit()
-        self.dqdv_min_entry.setFixedWidth(50)
+        self.dqdv_min_entry.setFixedWidth(55)
         bind_lineedit(self.dqdv_min_entry, self.dqdv_min_var)
         self.dqdv_min_entry.returnPressed.connect(lambda: self.update_plot())
         compare_y_layout.addWidget(self.dqdv_min_entry)
         
-        compare_y_layout.addWidget(QLabel("Max:"))
+        lbl_ymax = QLabel("Ymax:")
+        lbl_ymax.setFixedWidth(38)
+        compare_y_layout.addWidget(lbl_ymax)
         self.dqdv_max_entry = QLineEdit()
-        self.dqdv_max_entry.setFixedWidth(50)
+        self.dqdv_max_entry.setFixedWidth(55)
         bind_lineedit(self.dqdv_max_entry, self.dqdv_max_var)
         self.dqdv_max_entry.returnPressed.connect(lambda: self.update_plot())
         compare_y_layout.addWidget(self.dqdv_max_entry)
         
-        compare_y_layout.addWidget(QLabel("标题:"))
+        lbl_compare_title = QLabel("标题:")
+        lbl_compare_title.setFixedWidth(42)
+        compare_y_layout.addWidget(lbl_compare_title)
         self.dqdv_title_entry = QLineEdit()
+        self.dqdv_title_entry.setFixedWidth(123)
         bind_lineedit(self.dqdv_title_entry, self.dqdv_title_var)
         self.dqdv_title_entry.returnPressed.connect(lambda: self.update_plot())
         compare_y_layout.addWidget(self.dqdv_title_entry)
         
         self.compare_apply_btn = QPushButton("应用")
+        self.compare_apply_btn.setFixedWidth(68)
         self.compare_apply_btn.clicked.connect(self.update_plot)
         compare_y_layout.addWidget(self.compare_apply_btn)
         
@@ -1014,7 +1105,9 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         dqdv_grid_layout.setContentsMargins(0, 0, 0, 0)
         dqdv_grid_layout.setSpacing(4)
 
-        dqdv_grid_layout.addWidget(QLabel("Vmin:"))
+        lbl_vmin = QLabel("Vmin:")
+        lbl_vmin.setFixedWidth(38)
+        dqdv_grid_layout.addWidget(lbl_vmin)
         self.dqdv_vmin_entry = QLineEdit()
         self.dqdv_vmin_entry.setFixedWidth(55)
         self.dqdv_vmin_entry.setPlaceholderText("默认")
@@ -1022,7 +1115,9 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.dqdv_vmin_entry.returnPressed.connect(lambda: self.update_plot())
         dqdv_grid_layout.addWidget(self.dqdv_vmin_entry)
 
-        dqdv_grid_layout.addWidget(QLabel("Vmax:"))
+        lbl_vmax = QLabel("Vmax:")
+        lbl_vmax.setFixedWidth(38)
+        dqdv_grid_layout.addWidget(lbl_vmax)
         self.dqdv_vmax_entry = QLineEdit()
         self.dqdv_vmax_entry.setFixedWidth(55)
         self.dqdv_vmax_entry.setPlaceholderText("默认")
@@ -1030,28 +1125,29 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.dqdv_vmax_entry.returnPressed.connect(lambda: self.update_plot())
         dqdv_grid_layout.addWidget(self.dqdv_vmax_entry)
 
-        dqdv_grid_layout.addWidget(QLabel("采样点:"))
+        lbl_sample = QLabel("采样点:")
+        lbl_sample.setFixedWidth(42)
+        dqdv_grid_layout.addWidget(lbl_sample)
         
         self.dqdv_mode_combo = CustomComboBox()
         self.dqdv_mode_combo.addItems(["去重", "原始", "对比"])
-        self.dqdv_mode_combo.setFixedWidth(60)
+        self.dqdv_mode_combo.setFixedWidth(64)
         bind_combobox(self.dqdv_mode_combo, self.dqdv_mode_var)
         self.dqdv_mode_combo.currentIndexChanged.connect(lambda: self.delayed_update())
         dqdv_grid_layout.addWidget(self.dqdv_mode_combo)
 
         self.dqdv_npts_entry = QLineEdit()
-        self.dqdv_npts_entry.setFixedWidth(50)
+        self.dqdv_npts_entry.setFixedWidth(55)
         bind_lineedit(self.dqdv_npts_entry, self.dqdv_npts_var)
         self.dqdv_npts_entry.returnPressed.connect(lambda: self.update_plot())
         dqdv_grid_layout.addWidget(self.dqdv_npts_entry)
 
         self.dqdv_stat_combo = CustomComboBox()
         self.dqdv_stat_combo.addItems(["None", "均值", "方差"])
-        self.dqdv_stat_combo.setFixedWidth(65)
+        self.dqdv_stat_combo.setFixedWidth(68)
         bind_combobox(self.dqdv_stat_combo, self.dqdv_stat_var)
         self.dqdv_stat_combo.currentIndexChanged.connect(lambda: self.delayed_update())
         dqdv_grid_layout.addWidget(self.dqdv_stat_combo)
-        dqdv_grid_layout.addStretch()
 
         compare_grid.addWidget(QLabel("dQ/dV配置:"), 4, 0)
         compare_grid.addWidget(dqdv_grid_widget, 4, 1, 1, 5)
@@ -1082,37 +1178,44 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         # X Axis selection & bounds (optimized to a single horizontal layout)
         x_axis_widget = QWidget()
+        self.x_axis_widget = x_axis_widget
         x_axis_layout = QHBoxLayout(x_axis_widget)
-        x_axis_layout.setContentsMargins(0, 0, 0, 0)
-        x_axis_layout.setSpacing(4)
+        x_axis_layout.setContentsMargins(2, 0, 2, 0)
+        x_axis_layout.setSpacing(6)
         
-        x_axis_layout.addWidget(QLabel("X轴:"))
+        lbl_x = QLabel("X轴:")
+        lbl_x.setFixedWidth(24)
+        x_axis_layout.addWidget(lbl_x)
         self.x_combo = CustomComboBox()
-        self.x_combo.setFixedWidth(110)
+        self.x_combo.setFixedWidth(113)
         bind_combobox(self.x_combo, self.x_axis)
         self.x_combo.currentIndexChanged.connect(lambda: self.delayed_update())
         x_axis_layout.addWidget(self.x_combo)
         
-        x_axis_layout.addWidget(QLabel("Min:"))
+        lbl_min = QLabel("Min:")
+        lbl_min.setFixedWidth(32)
+        x_axis_layout.addWidget(lbl_min)
         self.x_min_entry = QLineEdit()
-        self.x_min_entry.setFixedWidth(50)
         bind_lineedit(self.x_min_entry, self.x_min_var)
         self.x_min_entry.returnPressed.connect(lambda: self.update_plot())
-        x_axis_layout.addWidget(self.x_min_entry)
+        x_axis_layout.addWidget(self.x_min_entry, 1)
         
-        x_axis_layout.addWidget(QLabel("Max:"))
+        lbl_max = QLabel("Max:")
+        lbl_max.setFixedWidth(32)
+        x_axis_layout.addWidget(lbl_max)
         self.x_max_entry = QLineEdit()
-        self.x_max_entry.setFixedWidth(50)
         bind_lineedit(self.x_max_entry, self.x_max_var)
         self.x_max_entry.returnPressed.connect(lambda: self.update_plot())
-        x_axis_layout.addWidget(self.x_max_entry)
+        x_axis_layout.addWidget(self.x_max_entry, 1)
         
-        x_axis_layout.addWidget(QLabel("标题:"))
-        self.x_title = QLineEdit("")
-        self.x_title.setFixedWidth(100)
+        lbl_title = QLabel("标题:")
+        lbl_title.setFixedWidth(32)
+        x_axis_layout.addWidget(lbl_title)
+        self.x_title = QLineEdit("Time/s")
+        bind_lineedit(self.x_title, self.x_settings[0]['title'])
         self.x_title.textChanged.connect(lambda: self.delayed_update())
         self.x_title.returnPressed.connect(lambda: self.update_plot())
-        x_axis_layout.addWidget(self.x_title)
+        x_axis_layout.addWidget(self.x_title, 1)
         
         plot_layout.addWidget(x_axis_widget)
         
@@ -1125,12 +1228,31 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.y_listboxes = []
         self.y_filter_entries = []
         self.y_selections = [[], [], []]
+        self.x_combos = []
+        self.x_combo_widgets = []
         
         for i in range(3):
             pane = QWidget()
             pane.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
             pane_lay = QVBoxLayout(pane)
             pane_lay.setContentsMargins(2, 2, 2, 2)
+            
+            # X{i+1} dropdown (for General mode)
+            x_pane = QWidget()
+            x_lay = QHBoxLayout(x_pane)
+            x_lay.setContentsMargins(0, 0, 0, 2)
+            x_lay.setSpacing(4)
+            x_lbl = QLabel(f"X{i+1}:")
+            x_lbl.setFixedWidth(24)
+            x_lay.addWidget(x_lbl)
+            
+            x_combo = CustomComboBox()
+            bind_combobox(x_combo, self.x_settings[i]['col'])
+            x_combo.currentIndexChanged.connect(lambda: self.delayed_update())
+            x_lay.addWidget(x_combo)
+            pane_lay.addWidget(x_pane)
+            self.x_combos.append(x_combo)
+            self.x_combo_widgets.append(x_pane)
             
             header_lay = QHBoxLayout()
             header_lay.setContentsMargins(0, 0, 0, 0)
@@ -1190,23 +1312,60 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         y_range_content_lay = QGridLayout(y_range_content)
         y_range_content_lay.setContentsMargins(0, 5, 0, 0)
         
+        self.x_range_row_widgets = []
         for i in range(3):
-            y_range_content_lay.addWidget(QLabel(f"Y{i+1}轴范围 Min:"), i, 0)
+            row_x = i * 2
+            row_y = i * 2 + 1
+            
+            # X{i+1} 范围行
+            lbl_x_min = QLabel(f"X{i+1}轴范围 Min:")
+            xmin_entry = QLineEdit()
+            xmin_entry.setFixedWidth(50)
+            bind_lineedit(xmin_entry, self.x_settings[i]['min'])
+            
+            lbl_x_max = QLabel("Max:")
+            xmax_entry = QLineEdit()
+            xmax_entry.setFixedWidth(50)
+            bind_lineedit(xmax_entry, self.x_settings[i]['max'])
+            
+            lbl_x_title = QLabel("标题:")
+            xtitle_entry = QLineEdit()
+            bind_lineedit(xtitle_entry, self.x_settings[i]['title'])
+            
+            y_range_content_lay.addWidget(lbl_x_min, row_x, 0)
+            y_range_content_lay.addWidget(xmin_entry, row_x, 1)
+            y_range_content_lay.addWidget(lbl_x_max, row_x, 2)
+            y_range_content_lay.addWidget(xmax_entry, row_x, 3)
+            y_range_content_lay.addWidget(lbl_x_title, row_x, 4)
+            y_range_content_lay.addWidget(xtitle_entry, row_x, 5)
+            
+            self.x_range_row_widgets.extend([lbl_x_min, xmin_entry, lbl_x_max, xmax_entry, lbl_x_title, xtitle_entry])
+            
+            self.x_settings[i]['min'].trace_add('write', lambda *args, axis=i: self.delayed_update())
+            self.x_settings[i]['max'].trace_add('write', lambda *args, axis=i: self.delayed_update())
+            self.x_settings[i]['title'].trace_add('write', lambda *args, axis=i: self.delayed_update())
+            
+            # Y{i+1} 范围行
+            lbl_y_min = QLabel(f"Y{i+1}轴范围 Min:")
             ymin_entry = QLineEdit()
             ymin_entry.setFixedWidth(50)
             bind_lineedit(ymin_entry, self.y_settings[i]['min'])
-            y_range_content_lay.addWidget(ymin_entry, i, 1)
             
-            y_range_content_lay.addWidget(QLabel("Max:"), i, 2)
+            lbl_y_max = QLabel("Max:")
             ymax_entry = QLineEdit()
             ymax_entry.setFixedWidth(50)
             bind_lineedit(ymax_entry, self.y_settings[i]['max'])
-            y_range_content_lay.addWidget(ymax_entry, i, 3)
             
-            y_range_content_lay.addWidget(QLabel("标题:"), i, 4)
+            lbl_y_title = QLabel("标题:")
             ytitle_entry = QLineEdit()
             bind_lineedit(ytitle_entry, self.y_settings[i]['title'])
-            y_range_content_lay.addWidget(ytitle_entry, i, 5)
+            
+            y_range_content_lay.addWidget(lbl_y_min, row_y, 0)
+            y_range_content_lay.addWidget(ymin_entry, row_y, 1)
+            y_range_content_lay.addWidget(lbl_y_max, row_y, 2)
+            y_range_content_lay.addWidget(ymax_entry, row_y, 3)
+            y_range_content_lay.addWidget(lbl_y_title, row_y, 4)
+            y_range_content_lay.addWidget(ytitle_entry, row_y, 5)
             
             self.y_settings[i]['min'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
             self.y_settings[i]['max'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
@@ -1228,78 +1387,109 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         plot_config_content_lay = QGridLayout(plot_config_content)
         plot_config_content_lay.setContentsMargins(0, 5, 0, 0)
         
-        # Legend vertical/horizontal pos & visibility
-        self.legend_visible_cb = QCheckBox("显示图例")
-        bind_checkbox(self.legend_visible_cb, self.legend_visible)
-        self.legend_visible_cb.toggled.connect(lambda c: self.toggle_legend())
-        plot_config_content_lay.addWidget(self.legend_visible_cb, 0, 0)
-        
-        legend_pos_widget = QWidget()
-        legend_pos_lay = QHBoxLayout(legend_pos_widget)
-        legend_pos_lay.setContentsMargins(0, 0, 0, 0)
-        legend_pos_lay.setSpacing(6)
-        
-        legend_pos_lay.addWidget(QLabel("垂直位置:"))
+        plot_config_content_lay.setColumnStretch(0, 0)
+        plot_config_content_lay.setColumnStretch(1, 1)
+        plot_config_content_lay.setColumnStretch(2, 0)
+        plot_config_content_lay.setColumnStretch(3, 1)
+        plot_config_content_lay.setColumnStretch(4, 0)
+        plot_config_content_lay.setColumnStretch(5, 1)
+
+        # Row 0: 垂直位置, 水平位置, 显示图例 (按钮形式，位于最右侧)
+        plot_config_content_lay.addWidget(QLabel("垂直位置:"), 0, 0)
         self.legend_y_entry = QLineEdit()
-        self.legend_y_entry.setFixedWidth(50)
         bind_lineedit(self.legend_y_entry, self.legend_y)
-        legend_pos_lay.addWidget(self.legend_y_entry)
-        
-        legend_pos_lay.addWidget(QLabel("水平位置:"))
+        plot_config_content_lay.addWidget(self.legend_y_entry, 0, 1)
+
+        plot_config_content_lay.addWidget(QLabel("水平位置:"), 0, 2)
         self.legend_x_entry = QLineEdit()
-        self.legend_x_entry.setFixedWidth(100)
         bind_lineedit(self.legend_x_entry, self.legend_x_positions_str)
-        legend_pos_lay.addWidget(self.legend_x_entry)
-        
-        legend_pos_lay.addStretch(1) # Keep inputs tightly grouped next to labels, push reset button to the right
-        
-        self.reset_plot_config_btn = QPushButton("重置")
-        self.reset_plot_config_btn.setFixedWidth(60)
+        plot_config_content_lay.addWidget(self.legend_x_entry, 0, 3, 1, 2)
+
+        self.legend_visible_btn = QPushButton("显示图例")
+        self.legend_visible_btn.setCheckable(True)
+        self.legend_visible_btn.setToolTip("点击切换图例显示/隐藏")
+
+        def update_legend_btn_style(checked):
+            if checked:
+                self.legend_visible_btn.setStyleSheet("background-color: #3b82f6; color: white;")
+            else:
+                self.legend_visible_btn.setStyleSheet("background-color: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1;")
+
+        def on_legend_btn_toggled(checked):
+            self.legend_visible.set(checked)
+            update_legend_btn_style(checked)
+            self.toggle_legend()
+
+        self.legend_visible_btn.toggled.connect(on_legend_btn_toggled)
+
+        def sync_legend_btn(*args):
+            val = bool(self.legend_visible.get())
+            self.legend_visible_btn.blockSignals(True)
+            self.legend_visible_btn.setChecked(val)
+            update_legend_btn_style(val)
+            self.legend_visible_btn.blockSignals(False)
+
+        self.legend_visible.trace_add('write', sync_legend_btn)
+        sync_legend_btn()
+        plot_config_content_lay.addWidget(self.legend_visible_btn, 0, 5)
+
+        # Row 1: 标记尺寸, 标记间隔 (移动到第二行，宽度与上下下拉框一致), 重置配置 (按钮形式)
+        plot_config_content_lay.addWidget(QLabel("标记尺寸:"), 1, 0)
+        self.marker_size_entry = QLineEdit()
+        bind_lineedit(self.marker_size_entry, self.marker_size_var)
+        self.marker_size_entry.returnPressed.connect(lambda: self.update_plot())
+        plot_config_content_lay.addWidget(self.marker_size_entry, 1, 1)
+        self.marker_size_var.trace_add('write', lambda *args: self.update_plot())
+
+        plot_config_content_lay.addWidget(QLabel("标记间隔:"), 1, 2)
+        self.markevery_entry = QLineEdit()
+        bind_lineedit(self.markevery_entry, self.markevery_var)
+        self.markevery_entry.returnPressed.connect(lambda: self.update_plot())
+        plot_config_content_lay.addWidget(self.markevery_entry, 1, 3, 1, 2)
+        self.markevery_var.trace_add('write', lambda *args: self.update_plot())
+
+        self.reset_plot_config_btn = QPushButton("重置配置")
         self.reset_plot_config_btn.clicked.connect(self.reset_plot_config)
-        legend_pos_lay.addWidget(self.reset_plot_config_btn)
-        
-        plot_config_content_lay.addWidget(legend_pos_widget, 0, 1, 1, 5)
-        
-        # Legend Font, Size (QLineEdit), Column count
-        plot_config_content_lay.addWidget(QLabel("图例字体:"), 1, 0)
+        plot_config_content_lay.addWidget(self.reset_plot_config_btn, 1, 5)
+
+        # Row 2: 图例字体, 图例列数, 图例字号 (宽度与下面下拉框一致)
+        plot_config_content_lay.addWidget(QLabel("图例字体:"), 2, 0)
         self.font_combo = CustomComboBox()
         self.font_combo.addItems(["Microsoft YaHei", "SimHei", "SimSun", "KaiTi", "FangSong", "Arial", "Calibri", "Times New Roman", "Segoe UI", "Tahoma"])
         bind_combobox(self.font_combo, self.font_family)
-        plot_config_content_lay.addWidget(self.font_combo, 1, 1)
-        
-        plot_config_content_lay.addWidget(QLabel("图例列数:"), 1, 2)
+        plot_config_content_lay.addWidget(self.font_combo, 2, 1)
+
+        plot_config_content_lay.addWidget(QLabel("图例列数:"), 2, 2)
         self.legend_cols_combo = CustomComboBox()
         self.legend_cols_combo.addItems(["1", "2", "3", "4", "5"])
         bind_combobox(self.legend_cols_combo, self.legend_cols)
-        plot_config_content_lay.addWidget(self.legend_cols_combo, 1, 3)
-        
-        plot_config_content_lay.addWidget(QLabel("图例字号:"), 1, 4)
+        plot_config_content_lay.addWidget(self.legend_cols_combo, 2, 3)
+
+        plot_config_content_lay.addWidget(QLabel("图例字号:"), 2, 4)
         self.legend_size_entry = QLineEdit()
-        self.legend_size_entry.setFixedWidth(50)
         bind_lineedit(self.legend_size_entry, self.legend_font_size)
         self.legend_size_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.legend_size_entry, 1, 5)
-        
-        # Frame width, Line width, Axis Font Size (QLineEdit)
-        plot_config_content_lay.addWidget(QLabel("轴线宽度:"), 2, 0)
+        plot_config_content_lay.addWidget(self.legend_size_entry, 2, 5)
+
+        # Row 3: 轴线宽度, 曲线宽度, 轴线字号 (宽度与下面下拉框一致)
+        plot_config_content_lay.addWidget(QLabel("轴线宽度:"), 3, 0)
         self.frame_width_combo = CustomComboBox()
         self.frame_width_combo.addItems(["0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"])
         bind_combobox(self.frame_width_combo, self.frame_width)
-        plot_config_content_lay.addWidget(self.frame_width_combo, 2, 1)
-        
-        plot_config_content_lay.addWidget(QLabel("曲线宽度:"), 2, 2)
+        plot_config_content_lay.addWidget(self.frame_width_combo, 3, 1)
+
+        plot_config_content_lay.addWidget(QLabel("曲线宽度:"), 3, 2)
         self.line_width_combo = CustomComboBox()
         self.line_width_combo.addItems(["0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"])
         bind_combobox(self.line_width_combo, self.line_width)
-        plot_config_content_lay.addWidget(self.line_width_combo, 2, 3)
-        
-        plot_config_content_lay.addWidget(QLabel("轴线字号:"), 2, 4)
+        plot_config_content_lay.addWidget(self.line_width_combo, 3, 3)
+
+        plot_config_content_lay.addWidget(QLabel("轴线字号:"), 3, 4)
         self.font_size_entry = QLineEdit()
-        self.font_size_entry.setFixedWidth(50)
         bind_lineedit(self.font_size_entry, self.font_size)
         self.font_size_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.font_size_entry, 2, 5)
-        
+        plot_config_content_lay.addWidget(self.font_size_entry, 3, 5)
+
         # Color schemes mapping
         default_colors = [
             'blue', 'green', 'purple', 'orange', 'pink', 
@@ -1330,7 +1520,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.markers.clear()
 
         for i in range(3):
-            row = 3 + i
+            row = 4 + i
             
             # Y1-Y3 Line Style (Cols 0, 1)
             style_var = Var('点划线' if i == 2 else ('虚线' if i == 1 else '实线'))
@@ -1361,23 +1551,6 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             plot_config_content_lay.addWidget(scheme_combo, row, 5)
             self.color_schemes.append(scheme_var)
             scheme_var.trace_add('write', lambda *args: self.update_plot())
-
-        # Row 6: Marker Size & Markevery inputs
-        plot_config_content_lay.addWidget(QLabel("标记尺寸:"), 6, 0)
-        self.marker_size_entry = QLineEdit()
-        self.marker_size_entry.setFixedWidth(50)
-        bind_lineedit(self.marker_size_entry, self.marker_size_var)
-        self.marker_size_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.marker_size_entry, 6, 1)
-        self.marker_size_var.trace_add('write', lambda *args: self.update_plot())
-
-        plot_config_content_lay.addWidget(QLabel("标记间隔:"), 6, 2)
-        self.markevery_entry = QLineEdit()
-        self.markevery_entry.setFixedWidth(50)
-        bind_lineedit(self.markevery_entry, self.markevery_var)
-        self.markevery_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.markevery_entry, 6, 3)
-        self.markevery_var.trace_add('write', lambda *args: self.update_plot())
             
         plot_config_box_lay = QVBoxLayout(plot_config_groupbox)
         plot_config_box_lay.setContentsMargins(10, 0, 10, 10)
@@ -1685,6 +1858,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.plot_btn.setEnabled(enabled)
         self.save_btn.setEnabled(enabled)
         self.csv2xlsx_btn.setEnabled(enabled)
+        if hasattr(self, 'floefd_clear_btn'):
+            self.floefd_clear_btn.setEnabled(enabled)
         if hasattr(self, 'compare_apply_btn'):
             self.compare_apply_btn.setEnabled(enabled)
         
@@ -1740,6 +1915,21 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         else:
             self.battery_filter_frame.setVisible(False)
             self.cycle_compare_frame.setVisible(False)
+
+        # FLOEFD Clear 按钮可见性
+        if hasattr(self, 'floefd_clear_btn'):
+            self.floefd_clear_btn.setVisible(self.file_type.get() == "raw")
+
+        # General 面板多 X 轴与原单行 X 轴可见性
+        is_general = (self.file_type.get() == "processed")
+        if hasattr(self, 'x_axis_widget'):
+            self.x_axis_widget.setVisible(not is_general)
+        if hasattr(self, 'x_combo_widgets'):
+            for w in self.x_combo_widgets:
+                w.setVisible(is_general)
+        if hasattr(self, 'x_range_row_widgets'):
+            for w in self.x_range_row_widgets:
+                w.setVisible(is_general)
 
     def open_multi_sheet_dialog(self):
         filename = self.file_path.get()
@@ -1910,11 +2100,12 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
 
     def select_all_y(self):
         """全部选择Y1"""
-        if not self.x_axis.get():
+        is_general = (self.file_type.get() == "processed")
+        x_col = self.x_settings[0]['col'].get() if is_general and hasattr(self, 'x_settings') and len(self.x_settings) > 0 else self.x_axis.get()
+        if not x_col:
             return
         
         self.clear_all_selections()
-        x_col = self.x_axis.get()
         
         listbox = self.y_listboxes[0]
         for i in range(listbox.size()):
@@ -1935,6 +2126,68 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                         item.setHidden(False)
                     else:
                         item.setHidden(True)
+
+    def rename_data_columns(self, rename_map):
+        """对选中的数据列进行重命名，并同步更新 DataFrame、Y1~Y3 列表框、选中项以及绘图图例"""
+        if not rename_map:
+            return
+            
+        # 1. 更新当前 DataFrame 中的列名
+        if hasattr(self, 'result_df') and self.result_df is not None:
+            self.result_df.rename(columns=rename_map, inplace=True)
+            
+        # 2. 更新所有 Y 列表框中的文本与 tooltip
+        if hasattr(self, 'y_listboxes'):
+            for listbox in self.y_listboxes:
+                listbox.blockSignals(True)
+                try:
+                    for row in range(listbox.count()):
+                        item = listbox.item(row)
+                        if item and item.text() in rename_map:
+                            new_val = rename_map[item.text()]
+                            item.setText(new_val)
+                            item.setToolTip(new_val)
+                finally:
+                    listbox.blockSignals(False)
+                    
+        # 3. 同步更新当前各 Y 轴的选中列表
+        if hasattr(self, 'y_selections'):
+            for i in range(len(self.y_selections)):
+                self.y_selections[i] = [rename_map.get(col, col) for col in self.y_selections[i]]
+                
+        # 4. 同步更新 X 轴下拉框
+        if hasattr(self, 'x_combos'):
+            for xc in self.x_combos:
+                cur_text = xc.currentText()
+                if cur_text in rename_map:
+                    new_val = rename_map[cur_text]
+                    xc.blockSignals(True)
+                    try:
+                        items = [xc.itemText(idx) for idx in range(xc.count())]
+                        for idx, txt in enumerate(items):
+                            if txt in rename_map:
+                                xc.setItemText(idx, rename_map[txt])
+                        xc.set(new_val)
+                    finally:
+                        xc.blockSignals(False)
+                        
+        if hasattr(self, 'x_combo') and self.x_combo:
+            cur_text = self.x_combo.currentText()
+            if cur_text in rename_map:
+                new_val = rename_map[cur_text]
+                self.x_combo.blockSignals(True)
+                try:
+                    items = [self.x_combo.itemText(idx) for idx in range(self.x_combo.count())]
+                    for idx, txt in enumerate(items):
+                        if txt in rename_map:
+                            self.x_combo.setItemText(idx, rename_map[txt])
+                    self.x_combo.set(new_val)
+                finally:
+                    self.x_combo.blockSignals(False)
+                    
+        # 5. 立即重新渲染图表，更新图例
+        self.update_plot()
+        self.update_status(f"已成功重命名 {len(rename_map)} 列数据")
 
     def safe_float_convert(self, value, default=0.0):
         """安全地转换浮点数"""
@@ -2017,6 +2270,21 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                 self.x_combo['values'] = columns
             finally:
                 self.x_combo.blockSignals(False)
+
+            if hasattr(self, 'x_combos'):
+                for i, xc in enumerate(self.x_combos):
+                    xc.blockSignals(True)
+                    try:
+                        xc['values'] = columns
+                        cur = self.x_settings[i]['col'].get() if (hasattr(self, 'x_settings') and i < len(self.x_settings)) else ""
+                        if not cur or cur not in columns:
+                            if columns:
+                                self.x_settings[i]['col'].set(columns[0])
+                                xc.set(columns[0])
+                        else:
+                            xc.set(cur)
+                    finally:
+                        xc.blockSignals(False)
 
             if is_compare:
                 self.compare_x_combo.blockSignals(True)

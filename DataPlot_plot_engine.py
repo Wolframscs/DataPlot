@@ -25,6 +25,40 @@ class PlotEngineMixin:
                 return label_str[:pos].rstrip()
             return label_str
 
+    def _get_series_for_x(self, x_col, df_to_plot):
+        """解析并准备 X 轴数据序列（支持时间差计算、Index 等）"""
+        if not x_col:
+            return pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
+            
+        if x_col == '工步时间（计算）' and '工步时间（计算）' not in df_to_plot.columns:
+            if '工步时间差(s)' in df_to_plot.columns:
+                x_col = '工步时间差(s)'
+            elif '工步时间' in df_to_plot.columns:
+                x_col = '工步时间'
+        elif x_col == '循环时间（计算）' and '循环时间（计算）' not in df_to_plot.columns:
+            if '循环时间差(s)' in df_to_plot.columns:
+                x_col = '循环时间差(s)'
+            elif '循环时间' in df_to_plot.columns:
+                x_col = '循环时间'
+                
+        time_diff_col = f"{x_col}_时间差(s)"
+        if time_diff_col in df_to_plot.columns:
+            x_col = time_diff_col
+        elif x_col in df_to_plot.columns:
+            import pandas.api.types as ptypes
+            if df_to_plot[x_col].dtype == 'object' or ptypes.is_string_dtype(df_to_plot[x_col]):
+                t_diff = self.calculate_time_diff_series(df_to_plot, x_col)
+                if t_diff is not None:
+                    df_to_plot[time_diff_col] = t_diff
+                    x_col = time_diff_col
+
+        if x_col in ['Index', 'index'] and x_col not in df_to_plot.columns:
+            return pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
+        elif x_col in df_to_plot.columns:
+            return df_to_plot[x_col]
+        else:
+            return pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
+
     def get_line_and_marker_props(self, axis_idx, curve_idx):
         """
         获取给定 Y 轴 (0, 1, 2) 和曲线序号 (curve_idx: 0, 1, 2...) 的线型、标记、尺寸和间隔配置。
@@ -390,10 +424,10 @@ class PlotEngineMixin:
             v_scale = self.safe_float_convert(self.voltage_scale_var.get(), 1.0)
             c_scale = self.safe_float_convert(self.current_scale_var.get(), 1.0)
 
-            # 时长筛选 (tmin ~ tmax)
+            # 时间筛选 (tmin ~ tmax)
             tmin_str = self.time_filter_min_var.get().strip() if hasattr(self, 'time_filter_min_var') else ""
             tmax_str = self.time_filter_max_var.get().strip() if hasattr(self, 'time_filter_max_var') else ""
-            filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "保留区间"
+            filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "区间内"
             try:
                 tmin_val = float(tmin_str) if tmin_str else None
             except ValueError:
@@ -1171,10 +1205,10 @@ class PlotEngineMixin:
                             if hasattr(self, 'logger') and self.logger:
                                 self.logger.error(f"工步筛选异常: {str(e)}")
 
-                # 时长筛选 (tmin ~ tmax)
+                # 时间筛选 (tmin ~ tmax)
                 tmin_str = self.time_filter_min_var.get().strip() if hasattr(self, 'time_filter_min_var') else ""
                 tmax_str = self.time_filter_max_var.get().strip() if hasattr(self, 'time_filter_max_var') else ""
-                filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "保留区间"
+                filter_mode = self.time_filter_mode_var.get() if hasattr(self, 'time_filter_mode_var') else "区间内"
                 try:
                     tmin_val = float(tmin_str) if tmin_str else None
                 except ValueError:
@@ -1252,48 +1286,36 @@ class PlotEngineMixin:
                 if not y1_data or not y2_data:
                     return
                 
-            x_col = self.x_axis.get()
-            if x_col == '工步时间（计算）' and '工步时间（计算）' not in df_to_plot.columns:
-                if '工步时间差(s)' in df_to_plot.columns:
-                    x_col = '工步时间差(s)'
-                elif '工步时间' in df_to_plot.columns:
-                    x_col = '工步时间'
-            elif x_col == '循环时间（计算）' and '循环时间（计算）' not in df_to_plot.columns:
-                if '循环时间差(s)' in df_to_plot.columns:
-                    x_col = '循环时间差(s)'
-                elif '循环时间' in df_to_plot.columns:
-                    x_col = '循环时间'
-                    
-            time_diff_col = f"{x_col}_时间差(s)"
-            if time_diff_col in df_to_plot.columns:
-                x_col = time_diff_col
-            elif x_col in df_to_plot.columns:
-                import pandas.api.types as ptypes
-                if df_to_plot[x_col].dtype == 'object' or ptypes.is_string_dtype(df_to_plot[x_col]):
-                    t_diff = self.calculate_time_diff_series(df_to_plot, x_col)
-                    if t_diff is not None:
-                        df_to_plot[time_diff_col] = t_diff
-                        x_col = time_diff_col
-
-            if x_col in ['Index', 'index'] and x_col not in df_to_plot.columns:
-                x_series = pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
-            elif x_col in df_to_plot.columns:
-                x_series = df_to_plot[x_col]
+            is_general = (self.file_type.get() == "processed")
+            if is_general and hasattr(self, 'x_settings'):
+                x1_col = self.x_settings[0]['col'].get() if len(self.x_settings) > 0 else ""
+                x2_col = self.x_settings[1]['col'].get() if len(self.x_settings) > 1 else ""
+                x3_col = self.x_settings[2]['col'].get() if len(self.x_settings) > 2 else ""
+                x1_series = self._get_series_for_x(x1_col, df_to_plot)
+                x2_series = self._get_series_for_x(x2_col, df_to_plot)
+                x3_series = self._get_series_for_x(x3_col, df_to_plot)
+                x_series = x1_series
             else:
-                x_series = pd.Series(np.arange(len(df_to_plot)), index=df_to_plot.index)
+                x_col = self.x_axis.get()
+                x_series = self._get_series_for_x(x_col, df_to_plot)
+                x1_series = x_series
+                x2_series = x_series
+                x3_series = x_series
                     
             font_size = int(self.safe_float_convert(self.font_size.get(), 18.0))
             font_family = self.font_family.get()
             plt.rcParams['font.sans-serif'] = [font_family] + [f for f in plt.rcParams['font.sans-serif'] if f != font_family]
             plt.rcParams['axes.unicode_minus'] = False
             
-            if x_col and x_col in df_to_plot.columns:
-                import pandas.api.types as ptypes
-                if df_to_plot[x_col].dtype == 'object' or ptypes.is_string_dtype(df_to_plot[x_col]):
-                    unique_count = df_to_plot[x_col].nunique()
-                    if unique_count > 1000:
-                        QMessageBox.warning(self, "警告", f"X轴 '{x_col}' 包含大量文本值 ({unique_count}个唯一值)，直接绘制会导致界面卡死。\n请选择时间差（例如包含'时间差(s)'的列）等数值列作为X轴。")
-                        return
+            if not is_general:
+                x_col = self.x_axis.get()
+                if x_col and x_col in df_to_plot.columns:
+                    import pandas.api.types as ptypes
+                    if df_to_plot[x_col].dtype == 'object' or ptypes.is_string_dtype(df_to_plot[x_col]):
+                        unique_count = df_to_plot[x_col].nunique()
+                        if unique_count > 1000:
+                            QMessageBox.warning(self, "警告", f"X轴 '{x_col}' 包含大量文本值 ({unique_count}个唯一值)，直接绘制会导致界面卡死。\n请选择时间差（例如包含'时间差(s)'的列）等数值列作为X轴。")
+                            return
 
             all_lines = []
             all_labels = []
@@ -1305,7 +1327,7 @@ class PlotEngineMixin:
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
                     style_props = self.get_line_and_marker_props(0, i)
-                    line = self.ax.plot(x_series, df_to_plot[col],
+                    line = self.ax.plot(x1_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
@@ -1340,7 +1362,7 @@ class PlotEngineMixin:
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
                     style_props = self.get_line_and_marker_props(1, i)
-                    line = ax2.plot(x_series, df_to_plot[col],
+                    line = ax2.plot(x2_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
@@ -1368,7 +1390,7 @@ class PlotEngineMixin:
                     color = plt.cm.tab10(i % 10) if color_map is None else color_map(i % color_map.N)
                     cleaned_label = self.clean_legend_label(col)
                     style_props = self.get_line_and_marker_props(2, i)
-                    line = ax3.plot(x_series, df_to_plot[col],
+                    line = ax3.plot(x3_series, df_to_plot[col],
                                       label=cleaned_label, 
                                       linewidth=self.safe_float_convert(self.line_width.get(), 1.5),
                                       color=color,
@@ -1420,7 +1442,29 @@ class PlotEngineMixin:
                     leg3 = self.ax.legend(y3_lines, y3_labels, loc='upper left', bbox_to_anchor=(positions[2], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
                     self.ax.add_artist(leg3)
                     
-            self.ax.set_xlabel(self.x_title.get(), fontsize=font_size, fontfamily=font_family, color=current_text_color)
+            if is_general and hasattr(self, 'x_settings'):
+                active_titles = []
+                if y1_data and len(self.x_settings) > 0:
+                    t = self.x_settings[0]['title'].get().strip()
+                    if t and t not in active_titles:
+                        active_titles.append(t)
+                if y2_data and len(self.x_settings) > 1:
+                    t = self.x_settings[1]['title'].get().strip()
+                    if t and t not in active_titles:
+                        active_titles.append(t)
+                if y3_data and len(self.x_settings) > 2:
+                    t = self.x_settings[2]['title'].get().strip()
+                    if t and t not in active_titles:
+                        active_titles.append(t)
+                if not active_titles:
+                    final_x_label = "Time/s"
+                elif len(active_titles) == 1:
+                    final_x_label = active_titles[0]
+                else:
+                    final_x_label = " / ".join(active_titles)
+                self.ax.set_xlabel(final_x_label, fontsize=font_size, fontfamily=font_family, color=current_text_color)
+            else:
+                self.ax.set_xlabel(self.x_title.get(), fontsize=font_size, fontfamily=font_family, color=current_text_color)
                     
             try:
                 self.ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 6))
@@ -1435,11 +1479,43 @@ class PlotEngineMixin:
             self.fig.subplots_adjust(right=right_margin, left=left_margin, top=top_margin, bottom=0.08)
             # Apply X-axis limits if specified
             try:
-                xmin_str = self.x_min_var.get().strip()
-                xmax_str = self.x_max_var.get().strip()
-                if xmin_str or xmax_str:
-                    x_values = pd.to_numeric(x_series, errors='coerce').dropna()
-                    if len(x_values) > 0:
+                if is_general and hasattr(self, 'x_settings'):
+                    active_xmins = []
+                    active_xmaxs = []
+                    
+                    series_and_settings = [
+                        (y1_data, x1_series, self.x_settings[0] if len(self.x_settings) > 0 else None),
+                        (y2_data, x2_series, self.x_settings[1] if len(self.x_settings) > 1 else None),
+                        (y3_data, x3_series, self.x_settings[2] if len(self.x_settings) > 2 else None)
+                    ]
+                    
+                    for y_active, xs, cfg in series_and_settings:
+                        if y_active and cfg is not None:
+                            x_vals = pd.to_numeric(xs, errors='coerce').dropna()
+                            if len(x_vals) > 0:
+                                s_min = float(x_vals.min())
+                                s_max = float(x_vals.max())
+                                xmin_str = cfg['min'].get().strip()
+                                xmax_str = cfg['max'].get().strip()
+                                
+                                eff_min = self.resolve_val(xmin_str, s_min, s_max) if xmin_str else s_min
+                                eff_max = self.resolve_val(xmax_str, s_min, s_max) if xmax_str else s_max
+                                if eff_min is None: eff_min = s_min
+                                if eff_max is None: eff_max = s_max
+                                active_xmins.append(eff_min)
+                                active_xmaxs.append(eff_max)
+                                
+                    if active_xmins and active_xmaxs:
+                        final_xmin = min(active_xmins)
+                        final_xmax = max(active_xmaxs)
+                        if final_xmin < final_xmax:
+                            self.ax.set_xlim(final_xmin, final_xmax)
+                else:
+                    xmin_str = self.x_min_var.get().strip()
+                    xmax_str = self.x_max_var.get().strip()
+                    if xmin_str or xmax_str:
+                        x_values = pd.to_numeric(x_series, errors='coerce').dropna()
+                        if len(x_values) > 0:
                             xmin_default = x_values.min()
                             xmax_default = x_values.max()
                             
