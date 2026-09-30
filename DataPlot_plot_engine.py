@@ -907,7 +907,8 @@ class PlotEngineMixin:
                 if user_y_title:
                     self.ax.set_ylabel(user_y_title, fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 elif y1_data:
-                    self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
+                    y1_vis = self.y_settings[0].get('title_visible', Var(True)).get() if len(self.y_settings) > 0 and 'title_visible' in self.y_settings[0] else True
+                    self.ax.set_ylabel(self.y_settings[0]['title'].get() if y1_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 
                 # Check user limits for comparative regular plot (which is now called "循环Y轴")
                 dqdv_min_str = self.dqdv_min_var.get().strip()
@@ -939,7 +940,8 @@ class PlotEngineMixin:
                         self.ax.set_ylim(top=ymax_val)
 
                 if y2_data and ax2:
-                    ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
+                    y2_vis = self.y_settings[1].get('title_visible', Var(True)).get() if len(self.y_settings) > 1 and 'title_visible' in self.y_settings[1] else True
+                    ax2.set_ylabel(self.y_settings[1]['title'].get() if y2_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[1]['min'].get())
                         ymax = float(self.y_settings[1]['max'].get())
@@ -949,7 +951,8 @@ class PlotEngineMixin:
                         pass
 
                 if y3_data and ax3:
-                    ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
+                    y3_vis = self.y_settings[2].get('title_visible', Var(True)).get() if len(self.y_settings) > 2 and 'title_visible' in self.y_settings[2] else True
+                    ax3.set_ylabel(self.y_settings[2]['title'].get() if y3_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[2]['min'].get())
                         ymax = float(self.y_settings[2]['max'].get())
@@ -1334,7 +1337,8 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                self.ax.set_ylabel(self.y_settings[0]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
+                y1_vis = self.y_settings[0].get('title_visible', Var(True)).get() if len(self.y_settings) > 0 and 'title_visible' in self.y_settings[0] else True
+                self.ax.set_ylabel(self.y_settings[0]['title'].get() if y1_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[0]['min'].get())
                     ymax = float(self.y_settings[0]['max'].get())
@@ -1371,7 +1375,8 @@ class PlotEngineMixin:
                     y2_labels_temp.append(cleaned_label)
                 all_lines.extend(y2_lines_temp)
                 all_labels.extend(y2_labels_temp)
-                ax2.set_ylabel(self.y_settings[1]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
+                y2_vis = self.y_settings[1].get('title_visible', Var(True)).get() if len(self.y_settings) > 1 and 'title_visible' in self.y_settings[1] else True
+                ax2.set_ylabel(self.y_settings[1]['title'].get() if y2_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[1]['min'].get())
                     ymax = float(self.y_settings[1]['max'].get())
@@ -1397,7 +1402,8 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                ax3.set_ylabel(self.y_settings[2]['title'].get(), fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
+                y3_vis = self.y_settings[2].get('title_visible', Var(True)).get() if len(self.y_settings) > 2 and 'title_visible' in self.y_settings[2] else True
+                ax3.set_ylabel(self.y_settings[2]['title'].get() if y3_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[2]['min'].get())
                     ymax = float(self.y_settings[2]['max'].get())
@@ -1444,27 +1450,28 @@ class PlotEngineMixin:
                     
             if is_general and hasattr(self, 'x_settings'):
                 active_titles = []
-                if y1_data and len(self.x_settings) > 0:
+                if y1_data and len(self.x_settings) > 0 and self.x_settings[0].get('title_visible', Var(True)).get():
                     t = self.x_settings[0]['title'].get().strip()
                     if t and t not in active_titles:
                         active_titles.append(t)
-                if y2_data and len(self.x_settings) > 1:
+                if y2_data and len(self.x_settings) > 1 and self.x_settings[1].get('title_visible', Var(True)).get():
                     t = self.x_settings[1]['title'].get().strip()
                     if t and t not in active_titles:
                         active_titles.append(t)
-                if y3_data and len(self.x_settings) > 2:
+                if y3_data and len(self.x_settings) > 2 and self.x_settings[2].get('title_visible', Var(True)).get():
                     t = self.x_settings[2]['title'].get().strip()
                     if t and t not in active_titles:
                         active_titles.append(t)
                 if not active_titles:
-                    final_x_label = "Time/s"
+                    final_x_label = ""
                 elif len(active_titles) == 1:
                     final_x_label = active_titles[0]
                 else:
                     final_x_label = " / ".join(active_titles)
                 self.ax.set_xlabel(final_x_label, fontsize=font_size, fontfamily=font_family, color=current_text_color)
             else:
-                self.ax.set_xlabel(self.x_title.get(), fontsize=font_size, fontfamily=font_family, color=current_text_color)
+                x_vis = self.x_settings[0].get('title_visible', Var(True)).get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else True
+                self.ax.set_xlabel(self.x_title.get() if x_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color)
                     
             try:
                 self.ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 6))
@@ -1728,7 +1735,7 @@ class PlotEngineMixin:
         self._legend_timer = QTimer()
         self._legend_timer.setSingleShot(True)
         self._legend_timer.timeout.connect(do_update)
-        self._legend_timer.start(300)
+        self._legend_timer.start(50)
 
     def toggle_legend(self):
         """切换图例的显示状态"""
@@ -1846,7 +1853,8 @@ class PlotEngineMixin:
                                 line.set_visible(True)
                             
                             pad_val = 10 if axis == 0 else 15
-                            target_ax.set_ylabel(self.y_settings[axis]['title'].get(),
+                            y_vis = self.y_settings[axis].get('title_visible', Var(True)).get() if len(self.y_settings) > axis and 'title_visible' in self.y_settings[axis] else True
+                            target_ax.set_ylabel(self.y_settings[axis]['title'].get() if y_vis else '',
                                                fontsize=int(self.safe_float_convert(self.font_size.get(), 18.0)),
                                                fontfamily=self.font_family.get(),
                                                color='black',

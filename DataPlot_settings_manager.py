@@ -66,24 +66,30 @@ class SettingsMixin:
             'x1_min': self.x_settings[0]['min'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else '',
             'x1_max': self.x_settings[0]['max'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else '',
             'x1_title': self.x_settings[0]['title'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else 'Time/s',
+            'x1_title_visible': self.x_settings[0]['title_visible'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 and 'title_visible' in self.x_settings[0] else True,
             'x2_min': self.x_settings[1]['min'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 1 else '',
             'x2_max': self.x_settings[1]['max'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 1 else '',
             'x2_title': self.x_settings[1]['title'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 1 else 'Time/s',
+            'x2_title_visible': self.x_settings[1]['title_visible'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 1 and 'title_visible' in self.x_settings[1] else True,
             'x3_min': self.x_settings[2]['min'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 2 else '',
             'x3_max': self.x_settings[2]['max'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 2 else '',
             'x3_title': self.x_settings[2]['title'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 2 else 'Time/s',
+            'x3_title_visible': self.x_settings[2]['title_visible'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 2 and 'title_visible' in self.x_settings[2] else True,
             
             'y1_min': self.y_settings[0]['min'].get() if len(self.y_settings) > 0 else '20',
             'y1_max': self.y_settings[0]['max'].get() if len(self.y_settings) > 0 else '60',
             'y1_title': self.y_settings[0]['title'].get() if len(self.y_settings) > 0 else 'Temperature/℃',
+            'y1_title_visible': self.y_settings[0]['title_visible'].get() if len(self.y_settings) > 0 and 'title_visible' in self.y_settings[0] else True,
             
             'y2_min': self.y_settings[1]['min'].get() if len(self.y_settings) > 1 else '20',
             'y2_max': self.y_settings[1]['max'].get() if len(self.y_settings) > 1 else '60',
             'y2_title': self.y_settings[1]['title'].get() if len(self.y_settings) > 1 else 'Temperature/℃',
+            'y2_title_visible': self.y_settings[1]['title_visible'].get() if len(self.y_settings) > 1 and 'title_visible' in self.y_settings[1] else True,
             
             'y3_min': self.y_settings[2]['min'].get() if len(self.y_settings) > 2 else '0',
             'y3_max': self.y_settings[2]['max'].get() if len(self.y_settings) > 2 else '150',
             'y3_title': self.y_settings[2]['title'].get() if len(self.y_settings) > 2 else 'HeatingPower/W',
+            'y3_title_visible': self.y_settings[2]['title_visible'].get() if len(self.y_settings) > 2 and 'title_visible' in self.y_settings[2] else True,
             
             # Advanced margin variables
             'adv_left_margin_mult': self.adv_left_margin_mult.get(),
@@ -220,27 +226,39 @@ class SettingsMixin:
                         self.x_settings[0]['min'].set(settings.get('x1_min', settings.get('x_min', '')))
                         self.x_settings[0]['max'].set(settings.get('x1_max', settings.get('x_max', '')))
                         self.x_settings[0]['title'].set(settings.get('x1_title', settings.get('x_title', 'Time/s')))
+                        if 'title_visible' in self.x_settings[0]:
+                            self.x_settings[0]['title_visible'].set(settings.get('x1_title_visible', True))
                     if len(self.x_settings) > 1:
                         self.x_settings[1]['min'].set(settings.get('x2_min', ''))
                         self.x_settings[1]['max'].set(settings.get('x2_max', ''))
                         self.x_settings[1]['title'].set(settings.get('x2_title', 'Time/s'))
+                        if 'title_visible' in self.x_settings[1]:
+                            self.x_settings[1]['title_visible'].set(settings.get('x2_title_visible', True))
                     if len(self.x_settings) > 2:
                         self.x_settings[2]['min'].set(settings.get('x3_min', ''))
                         self.x_settings[2]['max'].set(settings.get('x3_max', ''))
                         self.x_settings[2]['title'].set(settings.get('x3_title', 'Time/s'))
+                        if 'title_visible' in self.x_settings[2]:
+                            self.x_settings[2]['title_visible'].set(settings.get('x3_title_visible', True))
                 
                 if len(self.y_settings) > 0:
                     self.y_settings[0]['min'].set(settings.get('y1_min', '20'))
                     self.y_settings[0]['max'].set(settings.get('y1_max', '60'))
                     self.y_settings[0]['title'].set(settings.get('y1_title', 'Temperature/℃'))
+                    if 'title_visible' in self.y_settings[0]:
+                        self.y_settings[0]['title_visible'].set(settings.get('y1_title_visible', True))
                 if len(self.y_settings) > 1:
                     self.y_settings[1]['min'].set(settings.get('y2_min', '20'))
                     self.y_settings[1]['max'].set(settings.get('y2_max', '60'))
                     self.y_settings[1]['title'].set(settings.get('y2_title', 'Temperature/℃'))
+                    if 'title_visible' in self.y_settings[1]:
+                        self.y_settings[1]['title_visible'].set(settings.get('y2_title_visible', True))
                 if len(self.y_settings) > 2:
                     self.y_settings[2]['min'].set(settings.get('y3_min', '0'))
                     self.y_settings[2]['max'].set(settings.get('y3_max', '150'))
                     self.y_settings[2]['title'].set(settings.get('y3_title', 'HeatingPower/W'))
+                    if 'title_visible' in self.y_settings[2]:
+                        self.y_settings[2]['title_visible'].set(settings.get('y3_title_visible', True))
                     
                 # Load advanced margin variables
                 self.adv_left_margin_mult.set(settings.get('adv_left_margin_mult', '4.5'))

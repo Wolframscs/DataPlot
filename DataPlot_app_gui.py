@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFormLayout, QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton,
     QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QTextEdit, QMessageBox, QFileDialog,
-    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu, QApplication, QDialog
+    QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu, QApplication, QDialog, QSlider
 )
 from PySide6.QtCore import Qt, QTimer, Slot, QEvent, QObject
 from PySide6.QtGui import QIcon, QFont
@@ -341,6 +341,163 @@ class MultiSheetSelectDialog(QDialog):
                 res.append(item.text())
         return res
 
+class LegendXSliderDialog(QDialog):
+    """图例水平位置调节面板 (包含3个滑块独立调节)"""
+    def __init__(self, legend_x_var, parent=None):
+        super().__init__(parent)
+        self.legend_x_var = legend_x_var
+        self.parent_gui = parent
+        self.setWindowTitle("图例水平位置调节 (X1, X2, X3)")
+        self.resize(380, 230)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        
+        tip_lbl = QLabel("各 Y 轴图例水平偏移位置：")
+        tip_lbl.setStyleSheet("color: #475569; font-size: 13px; font-weight: bold;")
+        layout.addWidget(tip_lbl)
+        
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        
+        self.sliders = []
+        self.val_labels = []
+        
+        labels_text = ["Y1 图例 (X1):", "Y2 图例 (X2):", "Y3 图例 (X3):"]
+        positions = self.parse_current_positions()
+        
+        for i in range(3):
+            lbl = QLabel(labels_text[i])
+            lbl.setStyleSheet("font-weight: 500; font-size: 13px; color: #1e293b;")
+            grid.addWidget(lbl, i, 0)
+            
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(-50, 150)
+            slider.setSingleStep(1)
+            slider.setValue(int(round(positions[i] * 100)))
+            grid.addWidget(slider, i, 1)
+            
+            val_lbl = QLabel(f"{positions[i]:.2f}")
+            val_lbl.setFixedWidth(46)
+            val_lbl.setAlignment(Qt.AlignCenter)
+            val_lbl.setStyleSheet("background-color: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 4px; font-size: 12px; font-family: monospace;")
+            grid.addWidget(val_lbl, i, 2)
+            
+            self.sliders.append(slider)
+            self.val_labels.append(val_lbl)
+            
+            slider.valueChanged.connect(lambda val, idx=i: self.on_slider_changed(idx, val))
+            
+        layout.addLayout(grid)
+        
+        btn_box = QHBoxLayout()
+        reset_btn = QPushButton("重置默认 (0, 0.3, 0.7)")
+        reset_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f5f9;
+                color: #475569;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: normal;
+            }
+            QPushButton:hover {
+                background-color: #e2e8f0;
+                color: #1e293b;
+            }
+        """)
+        reset_btn.clicked.connect(self.reset_defaults)
+        btn_box.addWidget(reset_btn)
+        
+        btn_box.addStretch(1)
+        
+        close_btn = QPushButton("完成")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        close_btn.clicked.connect(self.accept)
+        btn_box.addWidget(close_btn)
+        
+        layout.addLayout(btn_box)
+        
+        self._updating_var = False
+        self.legend_x_var.trace_add('write', self.sync_from_var)
+
+    def parse_current_positions(self):
+        import re
+        val = str(self.legend_x_var.get() or "").strip()
+        tokens = re.split(r'[\s,]+', val)
+        positions = []
+        for t in tokens:
+            try:
+                positions.append(float(t))
+            except ValueError:
+                pass
+        default_pos = [0.0, 0.3, 0.7]
+        while len(positions) < 3:
+            positions.append(default_pos[len(positions)])
+        return positions[:3]
+
+    def on_slider_changed(self, idx, val):
+        if self._updating_var:
+            return
+        real_val = val / 100.0
+        self.val_labels[idx].setText(f"{real_val:.2f}")
+        
+        v1 = self.sliders[0].value() / 100.0
+        v2 = self.sliders[1].value() / 100.0
+        v3 = self.sliders[2].value() / 100.0
+        
+        self._updating_var = True
+        try:
+            self.legend_x_var.set(f"{v1:.2f}, {v2:.2f}, {v3:.2f}")
+            if self.parent_gui and hasattr(self.parent_gui, 'update_legend_only'):
+                self.parent_gui.update_legend_only()
+        finally:
+            self._updating_var = False
+
+    def sync_from_var(self, *args):
+        if self._updating_var:
+            return
+        positions = self.parse_current_positions()
+        self._updating_var = True
+        try:
+            for i in range(3):
+                s_val = int(round(positions[i] * 100))
+                s_val = max(-50, min(150, s_val))
+                if self.sliders[i].value() != s_val:
+                    self.sliders[i].setValue(s_val)
+                self.val_labels[i].setText(f"{positions[i]:.2f}")
+        finally:
+            self._updating_var = False
+
+    def reset_defaults(self):
+        defaults = [0.0, 0.3, 0.7]
+        self._updating_var = True
+        try:
+            for i in range(3):
+                self.sliders[i].setValue(int(round(defaults[i] * 100)))
+                self.val_labels[i].setText(f"{defaults[i]:.2f}")
+            self.legend_x_var.set("0, 0.3, 0.7")
+            if self.parent_gui and hasattr(self.parent_gui, 'update_legend_only'):
+                self.parent_gui.update_legend_only()
+        finally:
+            self._updating_var = False
+
 class CanvasResizeFilter(QObject):
     def __init__(self, gui):
         super().__init__()
@@ -352,7 +509,7 @@ class CanvasResizeFilter(QObject):
 class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot v1.0.9")
+        self.setWindowTitle("DataPlot v1.1.0")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -406,7 +563,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.marker_size_var = Var("5")
         self.markevery_var = Var("1")
         
-        self.version = "1.0.9"
+        self.version = "1.1.0"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False
@@ -423,7 +580,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                 'col': Var(""),
                 'min': Var(""),
                 'max': Var(""),
-                'title': Var("Time/s")
+                'title': Var("Time/s"),
+                'title_visible': Var(True)
             })
         self.x_min_var = self.x_settings[0]['min']
         self.x_max_var = self.x_settings[0]['max']
@@ -513,7 +671,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             settings = {
                 'min': Var(config['min']),
                 'max': Var(config['max']),
-                'title': Var(config['title'])
+                'title': Var(config['title']),
+                'title_visible': Var(True)
             }
             self.y_settings.append(settings)
 
@@ -531,6 +690,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.panel_font_family.trace_add('write', lambda *args: self.update_panel_font())
         self.panel_font_size.trace_add('write', lambda *args: self.update_panel_font())
         self.legend_y.trace_add('write', lambda *args: self.update_legend_only())
+        self.legend_x_positions_str.trace_add('write', lambda *args: self.update_legend_only())
         self.legend_font_size.trace_add('write', lambda *args: self.update_legend_only())
         self.legend_cols.trace_add('write', lambda *args: self.update_legend_only())
         self.compare_x_var.trace_add('write', self.sync_compare_x)
@@ -663,6 +823,36 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 border: none;
                 background: none;
+            }
+            QSlider::groove:horizontal {
+                border: none;
+                height: 4px;
+                background: #cbd5e1;
+                border-radius: 2px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #3b82f6;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                background: #2563eb;
+                border: 2px solid #ffffff;
+                width: 14px;
+                height: 14px;
+                margin-top: -5px;
+                margin-bottom: -5px;
+                border-radius: 7px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #1d4ed8;
+                width: 16px;
+                height: 16px;
+                margin-top: -6px;
+                margin-bottom: -6px;
+                border-radius: 8px;
+            }
+            QSlider::handle:horizontal:pressed {
+                background: #1e40af;
             }
         """)
 
@@ -1311,8 +1501,72 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         y_range_content = QWidget()
         y_range_content_lay = QGridLayout(y_range_content)
         y_range_content_lay.setContentsMargins(0, 5, 0, 0)
+
+        def create_title_visibility_btn(var, axis_type='y', axis_idx=0):
+            btn = QPushButton("显示")
+            btn.setFixedWidth(46)
+            btn.setFixedHeight(26)
+            btn.setCheckable(True)
+            btn.setChecked(bool(var.get()))
+            
+            def update_style(checked):
+                btn.setText("显示" if checked else "隐藏")
+                if checked:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #3b82f6;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-size: 12px;
+                            font-weight: normal;
+                            padding: 0;
+                        }
+                        QPushButton:hover {
+                            background-color: #2563eb;
+                        }
+                    """)
+                    btn.setToolTip("标题当前已显示，点击可隐藏")
+                else:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #f1f5f9;
+                            color: #94a3b8;
+                            border: 1px solid #cbd5e1;
+                            border-radius: 4px;
+                            font-size: 12px;
+                            font-weight: normal;
+                            padding: 0;
+                        }
+                        QPushButton:hover {
+                            background-color: #e2e8f0;
+                        }
+                    """)
+                    btn.setToolTip("标题当前已隐藏，点击可显示")
+                    
+            def on_clicked():
+                new_val = not bool(var.get())
+                var.set(new_val)
+                
+            def on_var_changed(*args):
+                val = bool(var.get())
+                btn.blockSignals(True)
+                btn.setChecked(val)
+                update_style(val)
+                btn.blockSignals(False)
+                if axis_type == 'y':
+                    self.update_y_axis(axis_idx)
+                else:
+                    self.delayed_update()
+                    
+            btn.clicked.connect(on_clicked)
+            var.trace_add('write', on_var_changed)
+            update_style(bool(var.get()))
+            return btn
         
         self.x_range_row_widgets = []
+        self.x_title_vis_btns = []
+        self.y_title_vis_btns = []
         for i in range(3):
             row_x = i * 2
             row_y = i * 2 + 1
@@ -1331,6 +1585,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             lbl_x_title = QLabel("标题:")
             xtitle_entry = QLineEdit()
             bind_lineedit(xtitle_entry, self.x_settings[i]['title'])
+
+            btn_x_vis = create_title_visibility_btn(self.x_settings[i]['title_visible'], axis_type='x', axis_idx=i)
             
             y_range_content_lay.addWidget(lbl_x_min, row_x, 0)
             y_range_content_lay.addWidget(xmin_entry, row_x, 1)
@@ -1338,8 +1594,10 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             y_range_content_lay.addWidget(xmax_entry, row_x, 3)
             y_range_content_lay.addWidget(lbl_x_title, row_x, 4)
             y_range_content_lay.addWidget(xtitle_entry, row_x, 5)
+            y_range_content_lay.addWidget(btn_x_vis, row_x, 6)
             
-            self.x_range_row_widgets.extend([lbl_x_min, xmin_entry, lbl_x_max, xmax_entry, lbl_x_title, xtitle_entry])
+            self.x_range_row_widgets.extend([lbl_x_min, xmin_entry, lbl_x_max, xmax_entry, lbl_x_title, xtitle_entry, btn_x_vis])
+            self.x_title_vis_btns.append(btn_x_vis)
             
             self.x_settings[i]['min'].trace_add('write', lambda *args, axis=i: self.delayed_update())
             self.x_settings[i]['max'].trace_add('write', lambda *args, axis=i: self.delayed_update())
@@ -1359,6 +1617,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             lbl_y_title = QLabel("标题:")
             ytitle_entry = QLineEdit()
             bind_lineedit(ytitle_entry, self.y_settings[i]['title'])
+
+            btn_y_vis = create_title_visibility_btn(self.y_settings[i]['title_visible'], axis_type='y', axis_idx=i)
             
             y_range_content_lay.addWidget(lbl_y_min, row_y, 0)
             y_range_content_lay.addWidget(ymin_entry, row_y, 1)
@@ -1366,6 +1626,8 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             y_range_content_lay.addWidget(ymax_entry, row_y, 3)
             y_range_content_lay.addWidget(lbl_y_title, row_y, 4)
             y_range_content_lay.addWidget(ytitle_entry, row_y, 5)
+            y_range_content_lay.addWidget(btn_y_vis, row_y, 6)
+            self.y_title_vis_btns.append(btn_y_vis)
             
             self.y_settings[i]['min'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
             self.y_settings[i]['max'].trace_add('write', lambda *args, axis=i: self.update_y_axis(axis))
@@ -1396,14 +1658,93 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
 
         # Row 0: 垂直位置, 水平位置, 显示图例 (按钮形式，位于最右侧)
         plot_config_content_lay.addWidget(QLabel("垂直位置:"), 0, 0)
+        
+        legend_y_widget = QWidget()
+        legend_y_lay = QHBoxLayout(legend_y_widget)
+        legend_y_lay.setContentsMargins(0, 0, 0, 0)
+        legend_y_lay.setSpacing(6)
+        
+        self.legend_y_slider = QSlider(Qt.Horizontal)
+        self.legend_y_slider.setRange(-50, 150)
+        self.legend_y_slider.setSingleStep(1)
+        self.legend_y_slider.setToolTip("鼠标拖动滑块实时调节图例垂直位置")
+        
         self.legend_y_entry = QLineEdit()
-        bind_lineedit(self.legend_y_entry, self.legend_y)
-        plot_config_content_lay.addWidget(self.legend_y_entry, 0, 1)
+        self.legend_y_entry.setFixedWidth(46)
+        self.legend_y_entry.setAlignment(Qt.AlignCenter)
+        self.legend_y_entry.setToolTip("图例垂直位置数值 (支持直接输入回车)")
+        
+        legend_y_lay.addWidget(self.legend_y_slider)
+        legend_y_lay.addWidget(self.legend_y_entry)
+        plot_config_content_lay.addWidget(legend_y_widget, 0, 1)
+
+        def on_slider_y_changed(val):
+            y_val = val / 100.0
+            str_val = f"{y_val:.2f}"
+            if self.legend_y_entry.text() != str_val:
+                self.legend_y_entry.blockSignals(True)
+                self.legend_y_entry.setText(str_val)
+                self.legend_y_entry.blockSignals(False)
+            if self.legend_y.get() != str_val:
+                self.legend_y.set(str_val)
+        self.legend_y_slider.valueChanged.connect(on_slider_y_changed)
+
+        def on_entry_y_changed():
+            try:
+                val = float(self.legend_y_entry.text().strip())
+                slider_val = int(round(val * 100))
+                slider_val = max(-50, min(150, slider_val))
+                if self.legend_y_slider.value() != slider_val:
+                    self.legend_y_slider.blockSignals(True)
+                    self.legend_y_slider.setValue(slider_val)
+                    self.legend_y_slider.blockSignals(False)
+                self.legend_y.set(f"{val:.2f}")
+            except ValueError:
+                pass
+        self.legend_y_entry.editingFinished.connect(on_entry_y_changed)
+
+        def sync_legend_y_from_var(*args):
+            try:
+                val = float(self.legend_y.get())
+                str_val = f"{val:.2f}"
+                if self.legend_y_entry.text() != str_val:
+                    self.legend_y_entry.blockSignals(True)
+                    self.legend_y_entry.setText(str_val)
+                    self.legend_y_entry.blockSignals(False)
+                slider_val = int(round(val * 100))
+                slider_val = max(-50, min(150, slider_val))
+                if self.legend_y_slider.value() != slider_val:
+                    self.legend_y_slider.blockSignals(True)
+                    self.legend_y_slider.setValue(slider_val)
+                    self.legend_y_slider.blockSignals(False)
+            except Exception:
+                pass
+        self.legend_y.trace_add('write', sync_legend_y_from_var)
+        sync_legend_y_from_var()
 
         plot_config_content_lay.addWidget(QLabel("水平位置:"), 0, 2)
-        self.legend_x_entry = QLineEdit()
-        bind_lineedit(self.legend_x_entry, self.legend_x_positions_str)
-        plot_config_content_lay.addWidget(self.legend_x_entry, 0, 3, 1, 2)
+        self.legend_x_btn = QPushButton()
+        self.legend_x_btn.setCursor(Qt.PointingHandCursor)
+        self.legend_x_btn.setToolTip("点击展开/收起各Y轴图例水平位置调节滑块")
+        self.legend_x_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #1e293b;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 4px 6px;
+                font-size: 12px;
+                font-weight: 500;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: #f8fafc;
+                border-color: #3b82f6;
+            }
+        """)
+        
+        self.legend_x_entry = self.legend_x_btn
+        plot_config_content_lay.addWidget(self.legend_x_btn, 0, 3, 1, 2)
 
         self.legend_visible_btn = QPushButton("显示图例")
         self.legend_visible_btn.setCheckable(True)
@@ -1433,62 +1774,227 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         sync_legend_btn()
         plot_config_content_lay.addWidget(self.legend_visible_btn, 0, 5)
 
-        # Row 1: 标记尺寸, 标记间隔 (移动到第二行，宽度与上下下拉框一致), 重置配置 (按钮形式)
-        plot_config_content_lay.addWidget(QLabel("标记尺寸:"), 1, 0)
+        # Row 1: 嵌入式图例水平位置折叠卡片面板 (默认折叠隐藏，附着在水平位置输入框下方)
+        self.legend_x_panel = QFrame()
+        self.legend_x_panel.setObjectName("legend_x_panel")
+        self.legend_x_panel.setStyleSheet("""
+            QFrame#legend_x_panel {
+                background-color: #f8fafc;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+            }
+        """)
+        legend_x_panel_lay = QVBoxLayout(self.legend_x_panel)
+        legend_x_panel_lay.setContentsMargins(10, 8, 10, 8)
+        legend_x_panel_lay.setSpacing(6)
+
+        # 卡片顶部提示与快捷重置/收起按钮
+        header_lay = QHBoxLayout()
+        header_lay.setContentsMargins(0, 0, 0, 0)
+        lbl_hint = QLabel("图例水平位置:")
+        lbl_hint.setStyleSheet("color: #475569; font-size: 12px; font-weight: bold;")
+        header_lay.addWidget(lbl_hint)
+        header_lay.addStretch(1)
+
+        btn_reset_x = QPushButton("重置 (0, 0.3, 0.7)")
+        btn_reset_x.setCursor(Qt.PointingHandCursor)
+        btn_reset_x.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #475569;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: normal;
+            }
+            QPushButton:hover {
+                background-color: #e2e8f0;
+                color: #1e293b;
+            }
+        """)
+        header_lay.addWidget(btn_reset_x)
+
+        btn_close_panel = QPushButton("收起 ▲")
+        btn_close_panel.setCursor(Qt.PointingHandCursor)
+        btn_close_panel.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #64748b;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: normal;
+            }
+            QPushButton:hover {
+                background-color: #e2e8f0;
+                color: #1e293b;
+            }
+        """)
+        header_lay.addWidget(btn_close_panel)
+        legend_x_panel_lay.addLayout(header_lay)
+
+        # 3个滑块区域 (Grid 布局)
+        slider_grid = QGridLayout()
+        slider_grid.setContentsMargins(0, 2, 0, 2)
+        slider_grid.setSpacing(8)
+
+        self.legend_x_sliders = []
+        self.legend_x_val_labels = []
+        x_labels = ["Y1图例 (X1):", "Y2图例 (X2):", "Y3图例 (X3):"]
+        init_pos = self.parse_legend_x_positions()
+
+        self._updating_legend_x_ui = False
+
+        for i in range(3):
+            lbl_axis = QLabel(x_labels[i])
+            lbl_axis.setFixedWidth(75)
+            lbl_axis.setStyleSheet("font-size: 12px; color: #334155; font-weight: 500;")
+            slider_grid.addWidget(lbl_axis, i, 0)
+
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(-50, 150)
+            slider.setSingleStep(1)
+            slider.setValue(int(round(init_pos[i] * 100)))
+            slider.setToolTip(f"拖动调节 {x_labels[i]} 水平偏移")
+            slider_grid.addWidget(slider, i, 1)
+
+            lbl_val = QLabel(f"{init_pos[i]:.2f}")
+            lbl_val.setFixedWidth(46)
+            lbl_val.setAlignment(Qt.AlignCenter)
+            lbl_val.setStyleSheet("background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 4px; font-size: 12px; font-family: monospace; color: #1e293b;")
+            slider_grid.addWidget(lbl_val, i, 2)
+
+            self.legend_x_sliders.append(slider)
+            self.legend_x_val_labels.append(lbl_val)
+
+            def make_on_slider_change(idx):
+                def handler(val):
+                    if self._updating_legend_x_ui:
+                        return
+                    real_val = val / 100.0
+                    self.legend_x_val_labels[idx].setText(f"{real_val:.2f}")
+
+                    v1 = self.legend_x_sliders[0].value() / 100.0
+                    v2 = self.legend_x_sliders[1].value() / 100.0
+                    v3 = self.legend_x_sliders[2].value() / 100.0
+                    
+                    self._updating_legend_x_ui = True
+                    try:
+                        self.legend_x_positions_str.set(f"{v1:.2f}, {v2:.2f}, {v3:.2f}")
+                        self.update_legend_only()
+                    finally:
+                        self._updating_legend_x_ui = False
+                return handler
+
+            slider.valueChanged.connect(make_on_slider_change(i))
+
+        legend_x_panel_lay.addLayout(slider_grid)
+        self.legend_x_panel.setVisible(False)
+        plot_config_content_lay.addWidget(self.legend_x_panel, 1, 0, 1, 6)
+
+        def update_legend_x_btn_text(*args):
+            positions = self.parse_legend_x_positions()
+            arrow = "▲" if self.legend_x_panel.isVisible() else "▼"
+            self.legend_x_btn.setText(f"{positions[0]:.2f}, {positions[1]:.2f}, {positions[2]:.2f}  {arrow}")
+            
+            if not self._updating_legend_x_ui:
+                self._updating_legend_x_ui = True
+                try:
+                    for i in range(3):
+                        s_val = int(round(positions[i] * 100))
+                        s_val = max(-50, min(150, s_val))
+                        if self.legend_x_sliders[i].value() != s_val:
+                            self.legend_x_sliders[i].blockSignals(True)
+                            self.legend_x_sliders[i].setValue(s_val)
+                            self.legend_x_sliders[i].blockSignals(False)
+                        self.legend_x_val_labels[i].setText(f"{positions[i]:.2f}")
+                finally:
+                    self._updating_legend_x_ui = False
+
+        self.legend_x_positions_str.trace_add('write', update_legend_x_btn_text)
+        update_legend_x_btn_text()
+
+        def toggle_legend_x_panel():
+            new_vis = not self.legend_x_panel.isVisible()
+            self.legend_x_panel.setVisible(new_vis)
+            update_legend_x_btn_text()
+
+        self.legend_x_btn.clicked.connect(toggle_legend_x_panel)
+        btn_close_panel.clicked.connect(lambda: (self.legend_x_panel.setVisible(False), update_legend_x_btn_text()))
+
+        def reset_legend_x_defaults():
+            defaults = [0.0, 0.3, 0.7]
+            self._updating_legend_x_ui = True
+            try:
+                for i in range(3):
+                    self.legend_x_sliders[i].setValue(int(round(defaults[i] * 100)))
+                    self.legend_x_val_labels[i].setText(f"{defaults[i]:.2f}")
+                self.legend_x_positions_str.set("0, 0.3, 0.7")
+                self.update_legend_only()
+            finally:
+                self._updating_legend_x_ui = False
+            update_legend_x_btn_text()
+
+        btn_reset_x.clicked.connect(reset_legend_x_defaults)
+
+        # Row 2: 标记尺寸, 标记间隔, 重置配置
+        plot_config_content_lay.addWidget(QLabel("标记尺寸:"), 2, 0)
         self.marker_size_entry = QLineEdit()
         bind_lineedit(self.marker_size_entry, self.marker_size_var)
         self.marker_size_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.marker_size_entry, 1, 1)
+        plot_config_content_lay.addWidget(self.marker_size_entry, 2, 1)
         self.marker_size_var.trace_add('write', lambda *args: self.update_plot())
 
-        plot_config_content_lay.addWidget(QLabel("标记间隔:"), 1, 2)
+        plot_config_content_lay.addWidget(QLabel("标记间隔:"), 2, 2)
         self.markevery_entry = QLineEdit()
         bind_lineedit(self.markevery_entry, self.markevery_var)
         self.markevery_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.markevery_entry, 1, 3, 1, 2)
+        plot_config_content_lay.addWidget(self.markevery_entry, 2, 3, 1, 2)
         self.markevery_var.trace_add('write', lambda *args: self.update_plot())
 
         self.reset_plot_config_btn = QPushButton("重置配置")
         self.reset_plot_config_btn.clicked.connect(self.reset_plot_config)
-        plot_config_content_lay.addWidget(self.reset_plot_config_btn, 1, 5)
+        plot_config_content_lay.addWidget(self.reset_plot_config_btn, 2, 5)
 
-        # Row 2: 图例字体, 图例列数, 图例字号 (宽度与下面下拉框一致)
-        plot_config_content_lay.addWidget(QLabel("图例字体:"), 2, 0)
+        # Row 3: 图例字体, 图例列数, 图例字号
+        plot_config_content_lay.addWidget(QLabel("图例字体:"), 3, 0)
         self.font_combo = CustomComboBox()
         self.font_combo.addItems(["Microsoft YaHei", "SimHei", "SimSun", "KaiTi", "FangSong", "Arial", "Calibri", "Times New Roman", "Segoe UI", "Tahoma"])
         bind_combobox(self.font_combo, self.font_family)
-        plot_config_content_lay.addWidget(self.font_combo, 2, 1)
+        plot_config_content_lay.addWidget(self.font_combo, 3, 1)
 
-        plot_config_content_lay.addWidget(QLabel("图例列数:"), 2, 2)
+        plot_config_content_lay.addWidget(QLabel("图例列数:"), 3, 2)
         self.legend_cols_combo = CustomComboBox()
         self.legend_cols_combo.addItems(["1", "2", "3", "4", "5"])
         bind_combobox(self.legend_cols_combo, self.legend_cols)
-        plot_config_content_lay.addWidget(self.legend_cols_combo, 2, 3)
+        plot_config_content_lay.addWidget(self.legend_cols_combo, 3, 3)
 
-        plot_config_content_lay.addWidget(QLabel("图例字号:"), 2, 4)
+        plot_config_content_lay.addWidget(QLabel("图例字号:"), 3, 4)
         self.legend_size_entry = QLineEdit()
         bind_lineedit(self.legend_size_entry, self.legend_font_size)
         self.legend_size_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.legend_size_entry, 2, 5)
+        plot_config_content_lay.addWidget(self.legend_size_entry, 3, 5)
 
-        # Row 3: 轴线宽度, 曲线宽度, 轴线字号 (宽度与下面下拉框一致)
-        plot_config_content_lay.addWidget(QLabel("轴线宽度:"), 3, 0)
+        # Row 4: 轴线宽度, 曲线宽度, 轴线字号
+        plot_config_content_lay.addWidget(QLabel("轴线宽度:"), 4, 0)
         self.frame_width_combo = CustomComboBox()
         self.frame_width_combo.addItems(["0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"])
         bind_combobox(self.frame_width_combo, self.frame_width)
-        plot_config_content_lay.addWidget(self.frame_width_combo, 3, 1)
+        plot_config_content_lay.addWidget(self.frame_width_combo, 4, 1)
 
-        plot_config_content_lay.addWidget(QLabel("曲线宽度:"), 3, 2)
+        plot_config_content_lay.addWidget(QLabel("曲线宽度:"), 4, 2)
         self.line_width_combo = CustomComboBox()
         self.line_width_combo.addItems(["0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"])
         bind_combobox(self.line_width_combo, self.line_width)
-        plot_config_content_lay.addWidget(self.line_width_combo, 3, 3)
+        plot_config_content_lay.addWidget(self.line_width_combo, 4, 3)
 
-        plot_config_content_lay.addWidget(QLabel("轴线字号:"), 3, 4)
+        plot_config_content_lay.addWidget(QLabel("轴线字号:"), 4, 4)
         self.font_size_entry = QLineEdit()
         bind_lineedit(self.font_size_entry, self.font_size)
         self.font_size_entry.returnPressed.connect(lambda: self.update_plot())
-        plot_config_content_lay.addWidget(self.font_size_entry, 3, 5)
+        plot_config_content_lay.addWidget(self.font_size_entry, 4, 5)
 
         # Color schemes mapping
         default_colors = [
@@ -1520,7 +2026,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.markers.clear()
 
         for i in range(3):
-            row = 4 + i
+            row = 5 + i
             
             # Y1-Y3 Line Style (Cols 0, 1)
             style_var = Var('点划线' if i == 2 else ('虚线' if i == 1 else '实线'))
@@ -2387,6 +2893,14 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
             self.markers[2].set("无")
         self.marker_size_var.set("5")
         self.markevery_var.set("1")
+        if hasattr(self, 'x_settings'):
+            for s in self.x_settings:
+                if 'title_visible' in s:
+                    s['title_visible'].set(True)
+        if hasattr(self, 'y_settings'):
+            for s in self.y_settings:
+                if 'title_visible' in s:
+                    s['title_visible'].set(True)
         self.update_font_and_plot()
 
     def update_panel_font(self):
