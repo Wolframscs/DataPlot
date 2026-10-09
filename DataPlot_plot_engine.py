@@ -6,7 +6,58 @@ from matplotlib.font_manager import FontProperties
 from PySide6.QtWidgets import QMessageBox
 from PySide6.QtCore import QTimer
 
+class Var:
+    def __init__(self, value=None):
+        self._value = value
+        self._callbacks = []
+
+    def get(self):
+        return self._value
+
+    def set(self, val):
+        self._value = val
+        for cb in list(self._callbacks):
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def trace_add(self, mode, callback):
+        self._callbacks.append(callback)
+        return callback
+
 class PlotEngineMixin:
+    def _is_axis_title_visible(self, settings_list, axis_idx):
+        """检查指定坐标轴标题是否设置为显示"""
+        try:
+            if settings_list and len(settings_list) > axis_idx:
+                setting = settings_list[axis_idx]
+                v = setting.get('title_visible')
+                if v is not None:
+                    return v.get() if hasattr(v, 'get') else bool(v)
+        except Exception:
+            pass
+        return True
+
+    def _clear_legends(self, axes):
+        """安全移除指定坐标轴上的所有图例，避免 matplotlib list.remove 异常"""
+        from matplotlib.legend import Legend
+        if not axes:
+            return
+        for ax in axes:
+            try:
+                leg = ax.get_legend()
+                if leg is not None:
+                    leg.remove()
+            except Exception:
+                pass
+            for art in list(getattr(ax, 'artists', [])):
+                if isinstance(art, Legend):
+                    try:
+                        art.remove()
+                    except Exception:
+                        pass
+
     def clean_legend_label(self, label):
         """清洗图例标签：
         - 如果是 battery 模式，移除末尾的单位括号（如 (℃), (A), (V) 等）
@@ -907,7 +958,7 @@ class PlotEngineMixin:
                 if user_y_title:
                     self.ax.set_ylabel(user_y_title, fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 elif y1_data:
-                    y1_vis = self.y_settings[0].get('title_visible', Var(True)).get() if len(self.y_settings) > 0 and 'title_visible' in self.y_settings[0] else True
+                    y1_vis = self._is_axis_title_visible(self.y_settings, 0)
                     self.ax.set_ylabel(self.y_settings[0]['title'].get() if y1_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 
                 # Check user limits for comparative regular plot (which is now called "循环Y轴")
@@ -940,7 +991,7 @@ class PlotEngineMixin:
                         self.ax.set_ylim(top=ymax_val)
 
                 if y2_data and ax2:
-                    y2_vis = self.y_settings[1].get('title_visible', Var(True)).get() if len(self.y_settings) > 1 and 'title_visible' in self.y_settings[1] else True
+                    y2_vis = self._is_axis_title_visible(self.y_settings, 1)
                     ax2.set_ylabel(self.y_settings[1]['title'].get() if y2_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[1]['min'].get())
@@ -951,7 +1002,7 @@ class PlotEngineMixin:
                         pass
 
                 if y3_data and ax3:
-                    y3_vis = self.y_settings[2].get('title_visible', Var(True)).get() if len(self.y_settings) > 2 and 'title_visible' in self.y_settings[2] else True
+                    y3_vis = self._is_axis_title_visible(self.y_settings, 2)
                     ax3.set_ylabel(self.y_settings[2]['title'].get() if y3_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                     try:
                         ymin = float(self.y_settings[2]['min'].get())
@@ -1337,7 +1388,7 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                y1_vis = self.y_settings[0].get('title_visible', Var(True)).get() if len(self.y_settings) > 0 and 'title_visible' in self.y_settings[0] else True
+                y1_vis = self._is_axis_title_visible(self.y_settings, 0)
                 self.ax.set_ylabel(self.y_settings[0]['title'].get() if y1_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[0]['min'].get())
@@ -1375,7 +1426,7 @@ class PlotEngineMixin:
                     y2_labels_temp.append(cleaned_label)
                 all_lines.extend(y2_lines_temp)
                 all_labels.extend(y2_labels_temp)
-                y2_vis = self.y_settings[1].get('title_visible', Var(True)).get() if len(self.y_settings) > 1 and 'title_visible' in self.y_settings[1] else True
+                y2_vis = self._is_axis_title_visible(self.y_settings, 1)
                 ax2.set_ylabel(self.y_settings[1]['title'].get() if y2_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[1]['min'].get())
@@ -1402,7 +1453,7 @@ class PlotEngineMixin:
                                       **style_props)
                     all_lines.extend(line)
                     all_labels.append(cleaned_label)
-                y3_vis = self.y_settings[2].get('title_visible', Var(True)).get() if len(self.y_settings) > 2 and 'title_visible' in self.y_settings[2] else True
+                y3_vis = self._is_axis_title_visible(self.y_settings, 2)
                 ax3.set_ylabel(self.y_settings[2]['title'].get() if y3_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color, labelpad=label_pad_val)
                 try:
                     ymin = float(self.y_settings[2]['min'].get())
@@ -1434,9 +1485,7 @@ class PlotEngineMixin:
                     legend_font_size = 18
                 
                 leg_prop = FontProperties(family=self.setup_mpl_font(font_family), size=legend_font_size)
-                for ax in self.fig.axes:
-                    if ax.get_legend() is not None:
-                        ax.get_legend().remove()
+                self._clear_legends(self.fig.axes)
                     
                 if y1_data:
                     leg1 = self.ax.legend(y1_lines, y1_labels, loc='upper left', bbox_to_anchor=(positions[0], legend_y), ncol=legend_cols, frameon=False, prop=leg_prop)
@@ -1450,15 +1499,15 @@ class PlotEngineMixin:
                     
             if is_general and hasattr(self, 'x_settings'):
                 active_titles = []
-                if y1_data and len(self.x_settings) > 0 and self.x_settings[0].get('title_visible', Var(True)).get():
+                if y1_data and self._is_axis_title_visible(self.x_settings, 0):
                     t = self.x_settings[0]['title'].get().strip()
                     if t and t not in active_titles:
                         active_titles.append(t)
-                if y2_data and len(self.x_settings) > 1 and self.x_settings[1].get('title_visible', Var(True)).get():
+                if y2_data and self._is_axis_title_visible(self.x_settings, 1):
                     t = self.x_settings[1]['title'].get().strip()
                     if t and t not in active_titles:
                         active_titles.append(t)
-                if y3_data and len(self.x_settings) > 2 and self.x_settings[2].get('title_visible', Var(True)).get():
+                if y3_data and self._is_axis_title_visible(self.x_settings, 2):
                     t = self.x_settings[2]['title'].get().strip()
                     if t and t not in active_titles:
                         active_titles.append(t)
@@ -1470,8 +1519,9 @@ class PlotEngineMixin:
                     final_x_label = " / ".join(active_titles)
                 self.ax.set_xlabel(final_x_label, fontsize=font_size, fontfamily=font_family, color=current_text_color)
             else:
-                x_vis = self.x_settings[0].get('title_visible', Var(True)).get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else True
-                self.ax.set_xlabel(self.x_title.get() if x_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color)
+                x_vis = self._is_axis_title_visible(getattr(self, 'x_settings', None), 0)
+                x_title_text = self.x_title.text() if hasattr(self.x_title, 'text') else (self.x_title.get() if hasattr(self.x_title, 'get') else str(self.x_title))
+                self.ax.set_xlabel(x_title_text if x_vis else '', fontsize=font_size, fontfamily=font_family, color=current_text_color)
                     
             try:
                 self.ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 6))
@@ -1681,9 +1731,7 @@ class PlotEngineMixin:
                 y2_data = self.y_selections[1]
                 y3_data = self.y_selections[2]
                 
-                for ax in self.fig.axes:
-                    if ax.get_legend() is not None:
-                        ax.get_legend().remove()
+                self._clear_legends(self.fig.axes)
 
                 ax1 = getattr(self, 'ax', None)
                 ax2 = getattr(self, 'ax2_ref', None)
@@ -1749,9 +1797,7 @@ class PlotEngineMixin:
                 if self.legend_visible.get():
                     self.update_legend_only()
                 else:
-                    for ax in axes:
-                        if ax.get_legend() is not None:
-                            ax.get_legend().remove()
+                    self._clear_legends(axes)
                 
                 self.canvas.draw()
         except Exception as e:
@@ -1769,12 +1815,12 @@ class PlotEngineMixin:
                     positions.append(float(t))
                 except ValueError:
                     pass
-            default_pos = [0.0, 0.3, 0.6]
+            default_pos = [0.0, 0.3, 0.7]
             while len(positions) < 3:
                 positions.append(default_pos[len(positions)])
             return positions[:3]
         except Exception:
-            return [0.0, 0.3, 0.6]
+            return [0.0, 0.3, 0.7]
 
     def update_legend_positions(self):
         """更新图例位置（带防抖）"""
@@ -1843,26 +1889,36 @@ class PlotEngineMixin:
                             break
                 
                 if target_ax:
+                    need_redraw = False
                     try:
-                        ymin = float(self.y_settings[axis]['min'].get())
-                        ymax = float(self.y_settings[axis]['max'].get())
-                        if ymin < ymax:
-                            lines = target_ax.get_lines()
-                            target_ax.set_ylim(ymin, ymax)
-                            for line in lines:
-                                line.set_visible(True)
-                            
-                            pad_val = 10 if axis == 0 else 15
-                            y_vis = self.y_settings[axis].get('title_visible', Var(True)).get() if len(self.y_settings) > axis and 'title_visible' in self.y_settings[axis] else True
-                            target_ax.set_ylabel(self.y_settings[axis]['title'].get() if y_vis else '',
-                                               fontsize=int(self.safe_float_convert(self.font_size.get(), 18.0)),
-                                               fontfamily=self.font_family.get(),
-                                               color='black',
-                                               labelpad=pad_val)
-                            
-                            self.canvas.draw()
+                        min_str = self.y_settings[axis]['min'].get().strip()
+                        max_str = self.y_settings[axis]['max'].get().strip()
+                        if min_str and max_str:
+                            ymin = float(min_str)
+                            ymax = float(max_str)
+                            if ymin < ymax:
+                                lines = target_ax.get_lines()
+                                target_ax.set_ylim(ymin, ymax)
+                                for line in lines:
+                                    line.set_visible(True)
+                                need_redraw = True
                     except (ValueError, TypeError):
                         pass
+
+                    try:
+                        pad_val = 10 if axis == 0 else 15
+                        y_vis = self._is_axis_title_visible(self.y_settings, axis)
+                        target_ax.set_ylabel(self.y_settings[axis]['title'].get() if y_vis else '',
+                                           fontsize=int(self.safe_float_convert(self.font_size.get(), 18.0)),
+                                           fontfamily=self.font_family.get(),
+                                           color='black',
+                                           labelpad=pad_val)
+                        need_redraw = True
+                    except Exception:
+                        pass
+                        
+                    if need_redraw:
+                        self.canvas.draw()
                 
             except Exception as e:
                 print(f"更新Y{axis+1}轴失败: {str(e)}")

@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import datetime
 
 class BatteryMathMixin:
     def calculate_time_diff_series(self, df, time_col):

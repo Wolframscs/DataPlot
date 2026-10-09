@@ -36,6 +36,7 @@ ENV/
 *.njsproj
 *.sln
 *.swp
+*.code-workspace
 
 # Local settings / Cache
 # settings.json

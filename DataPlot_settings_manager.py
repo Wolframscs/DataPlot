@@ -62,7 +62,7 @@ class SettingsMixin:
             # X & Y axes configurations
             'x_min': self.x_min_var.get(),
             'x_max': self.x_max_var.get(),
-            'x_title': self.x_title.get() if hasattr(self, 'x_title') else 'Time/s',
+            'x_title': (self.x_title.text() if hasattr(self.x_title, 'text') else (self.x_title.get() if hasattr(self.x_title, 'get') else str(self.x_title))) if hasattr(self, 'x_title') else 'Time/s',
             'x1_min': self.x_settings[0]['min'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else '',
             'x1_max': self.x_settings[0]['max'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else '',
             'x1_title': self.x_settings[0]['title'].get() if hasattr(self, 'x_settings') and len(self.x_settings) > 0 else 'Time/s',

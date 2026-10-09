@@ -509,7 +509,7 @@ class CanvasResizeFilter(QObject):
 class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot v1.1.0")
+        self.setWindowTitle("DataPlot v1.1.1")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -563,7 +563,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.marker_size_var = Var("5")
         self.markevery_var = Var("1")
         
-        self.version = "1.1.0"
+        self.version = "1.1.1"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False

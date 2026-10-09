@@ -641,9 +641,10 @@ class DataLoaderMixin:
             
         except Exception as e:
             error_msg = f"CSV 转换失败: {str(e)}"
-            self.logger.error(error_msg)
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(error_msg)
             self.msg_queue.put({'type': 'error', 'message': error_msg})
-            QTimer.singleShot(0, lambda: QMessageBox.critical(self, "错误", f"CSV 转换失败：{str(e)}"))
+            QTimer.singleShot(0, lambda msg=error_msg: QMessageBox.critical(self, "错误", msg))
         finally:
             QTimer.singleShot(0, lambda: self.set_buttons_state(True))
 
