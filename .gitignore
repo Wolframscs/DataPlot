@@ -50,3 +50,7 @@ DataPlot_TOTAL.py
 Publish_GitHub_Release.py
 Publish_GitHub_Release.bat
 
+# Algorithm prototypes and raw identification datasets (not for git release)
+Scheme_Adaptive_Substep_Identify/
+Scheme_Adaptive_Substep_Para/
+

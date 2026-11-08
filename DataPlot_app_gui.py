@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QSplitter, QGroupBox, QSizePolicy, QLayout, QMenu, QApplication, QDialog, QSlider
 )
 from PySide6.QtCore import Qt, QTimer, Slot, QEvent, QObject
-from PySide6.QtGui import QIcon, QFont
+from PySide6.QtGui import QIcon, QFont, QTextCursor
 
 class CustomLineEdit(QLineEdit):
     def __init__(self, *args, **kwargs):
@@ -37,6 +37,7 @@ from DataPlot_battery_math import BatteryMathMixin
 from DataPlot_plot_engine import PlotEngineMixin
 from DataPlot_excel_exporter import ExcelExporterMixin
 from DataPlot_settings_manager import SettingsMixin
+from DataPlot_simulation import SimulationMixin
 
 def resource_path(relative_path):
     """ 获取资源的绝对路径，兼容开发环境与PyInstaller打包后的环境 """
@@ -506,10 +507,10 @@ class CanvasResizeFilter(QObject):
     def eventFilter(self, obj, event):
         return super().eventFilter(obj, event)
 
-class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin):
+class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin, SimulationMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot v1.1.1")
+        self.setWindowTitle("DataPlot v2.0.0")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -563,7 +564,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.marker_size_var = Var("5")
         self.markevery_var = Var("1")
         
-        self.version = "1.1.1"
+        self.version = "2.0.0"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False
@@ -895,40 +896,47 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.radio_raw = QRadioButton("FLOEFD")
         self.radio_processed = QRadioButton("GENERAL")
         self.radio_battery = QRadioButton("BATTERY")
+        self.radio_simulation = QRadioButton("SIMULATION")
         
         file_type_layout.addWidget(self.radio_raw)
         file_type_layout.addWidget(self.radio_processed)
         file_type_layout.addWidget(self.radio_battery)
+        file_type_layout.addWidget(self.radio_simulation)
         
         self.file_type_group.addButton(self.radio_raw, 0)
         self.file_type_group.addButton(self.radio_processed, 1)
         self.file_type_group.addButton(self.radio_battery, 2)
+        self.file_type_group.addButton(self.radio_simulation, 3)
         
         # Radio Sync
         def on_radio_toggled(btn, checked):
             if checked:
-                val = "raw" if btn == self.radio_raw else "processed" if btn == self.radio_processed else "battery"
+                val = "raw" if btn == self.radio_raw else "processed" if btn == self.radio_processed else "battery" if btn == self.radio_battery else "simulation"
                 self.file_type.set(val)
                 self.update_file_type()
         
         self.radio_raw.toggled.connect(lambda c: on_radio_toggled(self.radio_raw, c))
         self.radio_processed.toggled.connect(lambda c: on_radio_toggled(self.radio_processed, c))
         self.radio_battery.toggled.connect(lambda c: on_radio_toggled(self.radio_battery, c))
+        self.radio_simulation.toggled.connect(lambda c: on_radio_toggled(self.radio_simulation, c))
         
         # Set default selection
         if self.file_type.get() == "raw":
             self.radio_raw.setChecked(True)
         elif self.file_type.get() == "processed":
             self.radio_processed.setChecked(True)
+        elif self.file_type.get() == "simulation":
+            self.radio_simulation.setChecked(True)
         else:
             self.radio_battery.setChecked(True)
             
         control_layout.addWidget(file_type_groupbox)
         
         # 2. Input Configuration Grid
-        input_groupbox = QGroupBox("输入配置")
-        input_groupbox.setCheckable(True)
-        input_groupbox.setChecked(True)
+        self.input_groupbox = QGroupBox("输入配置")
+        self.input_groupbox.setCheckable(True)
+        self.input_groupbox.setChecked(True)
+        input_groupbox = self.input_groupbox
         
         input_content = QWidget()
         input_grid = QGridLayout(input_content)
@@ -2245,6 +2253,9 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         
         control_layout.addWidget(self.adv_groupbox)
 
+        # 5.6 Simulation Panel (for 1D TR and future models)
+        self.setup_simulation_ui(control_layout)
+
         # 6. Status console widget
         console_groupbox = QGroupBox("状态日志")
         console_groupbox.setCheckable(True)
@@ -2303,10 +2314,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                 if msg_type == 'status':
                     message = msg.get('message')
                     clear = msg.get('clear', False)
-                    if clear:
-                        self.status_text.clear()
-                    self.status_text.append(message)
-                    self.status_text.ensureCursorVisible()
+                    self.update_status(message, clear=clear)
                 elif msg_type == 'done':
                     df = msg.get('df')
                     self.result_df = df
@@ -2415,6 +2423,16 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
                 self.y_settings[2]['title'].set('HeatingPower/W')
 
         # Visibility controls
+        is_sim = (self.file_type.get() == "simulation")
+        if hasattr(self, 'sim_frame'):
+            self.sim_frame.setVisible(is_sim)
+        if hasattr(self, 'input_groupbox'):
+            self.input_groupbox.setVisible(not is_sim)
+        if hasattr(self, 'plot_frame'):
+            self.plot_frame.setVisible(not is_sim)
+        if hasattr(self, 'adv_groupbox'):
+            self.adv_groupbox.setVisible(not is_sim)
+
         if self.file_type.get() == "battery":
             self.battery_filter_frame.setVisible(True)
             self.cycle_compare_frame.setVisible(True)
@@ -2429,7 +2447,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         # General 面板多 X 轴与原单行 X 轴可见性
         is_general = (self.file_type.get() == "processed")
         if hasattr(self, 'x_axis_widget'):
-            self.x_axis_widget.setVisible(not is_general)
+            self.x_axis_widget.setVisible(not is_general and not is_sim)
         if hasattr(self, 'x_combo_widgets'):
             for w in self.x_combo_widgets:
                 w.setVisible(is_general)
@@ -2725,11 +2743,18 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.clear_memory()
 
     def update_status(self, message, clear=False):
-        """更新状态信息"""
+        """更新状态信息并强制自动滚动到底部"""
         if clear:
             self.status_text.clear()
         self.status_text.append(message)
+        cursor = self.status_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.status_text.setTextCursor(cursor)
         self.status_text.ensureCursorVisible()
+        sb = self.status_text.verticalScrollBar()
+        if sb:
+            sb.setValue(sb.maximum())
+        QApplication.processEvents()
 
     def update_listboxes(self):
         """更新所有列表框的内容"""
