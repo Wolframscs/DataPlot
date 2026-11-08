@@ -429,6 +429,9 @@ class SimulationWorker(QThread):
             }
             self.finished_signal.emit(res)
         except Exception as e:
+            if self._is_cancelled:
+                self.progress_signal.emit("[中止] 仿真计算已安全终止。")
+                return
             import traceback
             err_msg = traceback.format_exc()
             self.error_signal.emit(f"仿真计算异常: {err_msg}")
@@ -589,7 +592,7 @@ class SimulationMixin:
         sim_vlay.addLayout(top_btn_layout)
 
         # 仿真模式专属副反应动力学参数 TableWidget (支持 Ctrl+A 全选 / Ctrl+C 复制到Excel / Ctrl+V 粘贴)
-        self.sim_rxn_box = QGroupBox("热失控反应动力学参数dc")
+        self.sim_rxn_box = QGroupBox("热失控反应动力学参数")
         self.sim_rxn_box.setCheckable(True)
         self.sim_rxn_box.setChecked(True)
         sim_rxn_content = QWidget()
@@ -627,7 +630,7 @@ class SimulationMixin:
         sim_vlay.addWidget(self.sim_rxn_box)
 
         # 仿真核心指标概览卡片
-        self.summary_box = QGroupBox("仿真核心指标概览")
+        self.summary_box = QGroupBox("核心指标概览")
         self.summary_box.setCheckable(True)
         self.summary_box.setChecked(True)
         summary_content = QWidget()
@@ -686,7 +689,7 @@ class SimulationMixin:
         sim_vlay.addWidget(self.summary_box)
 
         # 仿真图表视图切换与数据导出 GroupBox
-        post_box = QGroupBox("仿真图表视图切换与数据导出")
+        post_box = QGroupBox("后处理绘图")
         post_grid = QGridLayout(post_box)
         post_grid.setContentsMargins(8, 8, 8, 8)
         post_grid.setHorizontalSpacing(6)
@@ -1406,24 +1409,30 @@ class SimulationMixin:
         self.sim_worker.progress_signal.connect(self.update_status)
         self.sim_worker.finished_signal.connect(self.on_simulation_finished)
         self.sim_worker.error_signal.connect(self.on_simulation_error)
+        self.sim_worker.finished.connect(self._on_simulation_worker_finished)
         self.sim_worker.start()
 
-    def stop_simulation(self):
-        if self.sim_worker and self.sim_worker.isRunning():
-            self.sim_worker.cancel()
-            self.update_status("正在请求中止仿真线程...")
-
-    def on_simulation_error(self, err_msg):
-        self.update_status(err_msg)
+    def _on_simulation_worker_finished(self):
         self.sim_run_btn.setEnabled(True)
         self.sim_stop_btn.setEnabled(False)
         self.reset_summary_card(computing=False)
+
+    def stop_simulation(self):
+        if self.sim_worker and self.sim_worker.isRunning():
+            self.sim_stop_btn.setEnabled(False)
+            self.update_status("[中止] 正在请求终止仿真线程，请稍候...")
+            self.sim_worker.cancel()
+        else:
+            self._on_simulation_worker_finished()
+
+    def on_simulation_error(self, err_msg):
+        self.update_status(err_msg)
+        self._on_simulation_worker_finished()
         QMessageBox.critical(self, "仿真错误", err_msg)
 
     def on_simulation_finished(self, results):
         self.sim_results = results
-        self.sim_run_btn.setEnabled(True)
-        self.sim_stop_btn.setEnabled(False)
+        self._on_simulation_worker_finished()
         self.save_std_btn.setEnabled(True)
         self.save_full_btn.setEnabled(True)
 
@@ -1871,23 +1880,29 @@ class SimulationMixin:
         self.tr_id_worker.progress_signal.connect(self.update_status)
         self.tr_id_worker.finished_signal.connect(self.on_tr_identify_finished)
         self.tr_id_worker.error_signal.connect(self.on_tr_identify_error)
+        self.tr_id_worker.finished.connect(self._on_tr_identify_worker_finished)
         self.tr_id_worker.start()
+
+    def _on_tr_identify_worker_finished(self):
+        self.tr_id_run_btn.setEnabled(True)
+        self.tr_id_stop_btn.setEnabled(False)
 
     def stop_tr_identify(self):
         if self.tr_id_worker and self.tr_id_worker.isRunning():
+            self.tr_id_stop_btn.setEnabled(False)
+            self.update_status("[中止] 正在请求终止 1D TR 辨识进程，请稍候...")
             self.tr_id_worker.cancel()
-            self.update_status("正在请求中止 1D TR 辨识进程...")
+        else:
+            self._on_tr_identify_worker_finished()
 
     def on_tr_identify_error(self, err):
         self.update_status(err)
-        self.tr_id_run_btn.setEnabled(True)
-        self.tr_id_stop_btn.setEnabled(False)
+        self._on_tr_identify_worker_finished()
         QMessageBox.critical(self, "辨识错误", err)
 
     def on_tr_identify_finished(self, res):
         self.last_tr_id_result = res
-        self.tr_id_run_btn.setEnabled(True)
-        self.tr_id_stop_btn.setEnabled(False)
+        self._on_tr_identify_worker_finished()
         self.tr_id_apply_btn.setEnabled(True)
         self.tr_id_save_btn.setEnabled(True)
 
@@ -2089,23 +2104,29 @@ class SimulationMixin:
         self.arc_id_worker.progress_signal.connect(self.update_status)
         self.arc_id_worker.finished_signal.connect(self.on_arc_identify_finished)
         self.arc_id_worker.error_signal.connect(self.on_arc_identify_error)
+        self.arc_id_worker.finished.connect(self._on_arc_identify_worker_finished)
         self.arc_id_worker.start()
+
+    def _on_arc_identify_worker_finished(self):
+        self.arc_run_btn.setEnabled(True)
+        self.arc_stop_btn.setEnabled(False)
 
     def stop_arc_identify(self):
         if self.arc_id_worker and self.arc_id_worker.isRunning():
+            self.arc_stop_btn.setEnabled(False)
+            self.update_status("[中止] 正在请求终止 ARC 辨识线程，请稍候...")
             self.arc_id_worker.cancel()
-            self.update_status("正在请求中止 ARC 辨识线程...")
+        else:
+            self._on_arc_identify_worker_finished()
 
     def on_arc_identify_error(self, err):
         self.update_status(err)
-        self.arc_run_btn.setEnabled(True)
-        self.arc_stop_btn.setEnabled(False)
+        self._on_arc_identify_worker_finished()
         QMessageBox.critical(self, "辨识错误", err)
 
     def on_arc_identify_finished(self, res):
         self.last_arc_id_result = res
-        self.arc_run_btn.setEnabled(True)
-        self.arc_stop_btn.setEnabled(False)
+        self._on_arc_identify_worker_finished()
         self.arc_import_btn.setEnabled(True)
         self.arc_save_btn.setEnabled(True)
 

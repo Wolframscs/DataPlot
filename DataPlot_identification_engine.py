@@ -245,12 +245,18 @@ class TR1DIdentifyWorker(QThread):
         super().__init__()
         self.config = config
         self._is_cancelled = False
+        self.pool = None
 
     def cancel(self):
         self._is_cancelled = True
+        if self.pool is not None:
+            try:
+                self.pool.terminate()
+            except Exception:
+                pass
 
     def run(self):
-        pool = None
+        self.pool = None
         try:
             cfg = self.config
             geom_raw = cfg["geometry"]
@@ -388,17 +394,21 @@ class TR1DIdentifyWorker(QThread):
             # 启动多进程池
             if cpu_cores > 1:
                 ctx = multiprocessing.get_context("spawn")
-                pool = ctx.Pool(processes=cpu_cores)
+                self.pool = ctx.Pool(processes=cpu_cores)
                 
                 def eval_batch_pso(X_mat):
+                    if self._is_cancelled:
+                        return np.full(len(X_mat), 1e9, dtype=np.float64)
                     tasks = [(X_mat[k], static_meta) for k in range(len(X_mat))]
-                    fits = pool.map(_evaluate_1d_simulation_single_particle, tasks, chunksize=1)
+                    fits = self.pool.map(_evaluate_1d_simulation_single_particle, tasks, chunksize=1)
                     return np.array(fits, dtype=np.float64)
                 
                 pso_eval_func = None
                 pso_batch_eval = eval_batch_pso
             else:
                 def eval_single(x_vec):
+                    if self._is_cancelled:
+                        return 1e9
                     return _evaluate_1d_simulation_single_particle((x_vec, static_meta))
                 pso_eval_func = eval_single
                 pso_batch_eval = None
@@ -422,13 +432,21 @@ class TR1DIdentifyWorker(QThread):
 
             for step in range(max_iter):
                 if self._is_cancelled:
-                    self.progress_signal.emit("1D TR 辨识已由用户中止。")
-                    if pool is not None:
-                        pool.terminate()
-                        pool.join()
+                    self.progress_signal.emit("[中止] 1D TR 辨识已由用户中止。")
+                    if self.pool is not None:
+                        try:
+                            self.pool.terminate()
+                            self.pool.join()
+                        except Exception:
+                            pass
+                        self.pool = None
                     return
 
                 best_x, best_fit = pso.optimize_step(step)
+                if self._is_cancelled:
+                    self.progress_signal.emit("[中止] 1D TR 辨识已由用户中止。")
+                    return
+
                 elapsed_iter = time.perf_counter() - t_start
                 self.progress_signal.emit(
                     f"  [PSO代数 {step+1:2d}/{max_iter} ({(step+1)/max_iter*100:4.1f}%)] "
@@ -436,10 +454,13 @@ class TR1DIdentifyWorker(QThread):
                 )
 
             # 关闭进程池
-            if pool is not None:
-                pool.close()
-                pool.join()
-                pool = None
+            if self.pool is not None:
+                try:
+                    self.pool.close()
+                    self.pool.join()
+                except Exception:
+                    pass
+                self.pool = None
 
             elapsed_total = time.perf_counter() - t_start
 
@@ -580,12 +601,20 @@ class TR1DIdentifyWorker(QThread):
             self.finished_signal.emit(result)
 
         except Exception as e:
-            if pool is not None:
-                pool.terminate()
-                pool.join()
+            if self._is_cancelled:
+                self.progress_signal.emit("[中止] 1D TR 辨识进程已安全终止。")
+                return
             import traceback
             err = traceback.format_exc()
             self.error_signal.emit(f"1D TR 辨识异常: {err}")
+        finally:
+            if self.pool is not None:
+                try:
+                    self.pool.terminate()
+                    self.pool.join()
+                except Exception:
+                    pass
+                self.pool = None
 
 
 # ------------------------------------------------------------------------------
@@ -726,6 +755,8 @@ class ARCIdentifyWorker(QThread):
 
             # 目标评估函数
             def fitness(x):
+                if self._is_cancelled:
+                    return 1e9
                 try:
                     ln_A = float(np.clip(x[0], -20.0, 80.0))
                     ln_E = float(np.clip(x[1], 4.0, 30.0))
@@ -795,7 +826,7 @@ class ARCIdentifyWorker(QThread):
                 )
                 for step in range(pso_iters):
                     if self._is_cancelled:
-                        self.progress_signal.emit("ARC 辨识已由用户中止。")
+                        self.progress_signal.emit("[中止] ARC 辨识已由用户中止。")
                         return
                     bx, bfit = pso.optimize_step(step)
                     if (step + 1) % 5 == 0 or step == pso_iters - 1:
@@ -805,6 +836,9 @@ class ARCIdentifyWorker(QThread):
 
             # 2. Nelder-Mead 精细辨识阶段
             if method_mode in ["nm", "hybrid"]:
+                if self._is_cancelled:
+                    self.progress_signal.emit("[中止] ARC 辨识已由用户中止。")
+                    return
                 if method_mode == "hybrid":
                     self.progress_signal.emit("  [步骤 2] 基于 PSO 最优解，执行 Nelder-Mead 局部精细辨识...")
                     x_start = best_x
@@ -820,10 +854,17 @@ class ARCIdentifyWorker(QThread):
                     max_iter=int(cfg.get("nm_max_iter", 1500)),
                     max_fev=int(cfg.get("nm_max_fev", 3000))
                 )
+                if self._is_cancelled:
+                    self.progress_signal.emit("[中止] ARC 辨识已由用户中止。")
+                    return
                 if nm_res["fun"] < best_rmse:
                     best_x = nm_res["x"]
                     best_rmse = nm_res["fun"]
                 self.progress_signal.emit(f"    Nelder-Mead 完成 (迭代 {nm_res['nit']} 次) | 拟合 RMSE={best_rmse:.6e}")
+
+            if self._is_cancelled:
+                self.progress_signal.emit("[中止] ARC 辨识已由用户中止。")
+                return
 
             elapsed = time.perf_counter() - t_start
 
@@ -881,6 +922,9 @@ class ARCIdentifyWorker(QThread):
             self.finished_signal.emit(res)
 
         except Exception as e:
+            if self._is_cancelled:
+                self.progress_signal.emit("[中止] ARC 辨识已安全终止。")
+                return
             import traceback
             err = traceback.format_exc()
             self.error_signal.emit(f"ARC 辨识异常: {err}")
