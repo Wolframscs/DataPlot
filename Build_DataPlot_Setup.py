@@ -63,6 +63,8 @@ def sync_version_from_gui():
         print(f"==> [版本同步] 已成功从 DataPlot_app_gui.py 读取版本号 {ver_str} 并写入 setup.iss")
 
 def main():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
     # 0. 从 DataPlot_app_gui.py 读取唯一权威版本号并同步至 setup.iss
     sync_version_from_gui()
 
