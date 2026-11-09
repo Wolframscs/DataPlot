@@ -205,6 +205,29 @@ DEFAULT_IDENT_REACTIONS = [
     },
 ]
 
+# 仿真时空云图可选色彩映射方案 (ColorMap List)
+SIM_COLORMAP_LIST = [
+    ("jet", "jet (经典彩虹 / CFD与传热仿真标配)"),
+    ("turbo", "turbo (平滑高保真彩虹)"),
+    ("coolwarm", "coolwarm (经典冷暖色 蓝-白-红)"),
+    ("hot", "hot (热力图 黑-红-黄-白)"),
+    ("inferno", "inferno (熔岩热力 黑-紫-黄)"),
+    ("plasma", "plasma (等离子 蓝-紫-橙-黄)"),
+    ("viridis", "viridis (翠绿蓝黄 / 感知均匀)"),
+    ("magma", "magma (深岩浆 黑-紫-橙-白)"),
+    ("cividis", "cividis (蓝黄感知均匀 / 色盲友好)"),
+    ("afmhot", "afmhot (AFM经典热力图)"),
+    ("gist_heat", "gist_heat (暗红-亮黄白渐变)"),
+    ("YlOrRd", "YlOrRd (明黄-橙-深红)"),
+    ("RdYlBu_r", "RdYlBu (红-黄-蓝 渐变)"),
+    ("Spectral_r", "Spectral (倒置光谱 红-黄-蓝)"),
+    ("seismic", "seismic (深蓝-白-深红 双极对比)"),
+    ("bwr", "bwr (蓝-白-红 双极对比)"),
+    ("rainbow", "rainbow (光谱彩虹色)"),
+    ("ocean", "ocean (冷绿-青-蓝-白)"),
+    ("gnuplot2", "gnuplot2 (多阶平滑伪彩色)"),
+]
+
 
 class SimulationWorker(QThread):
     """1D TR 热失控仿真计算线程"""
@@ -442,6 +465,13 @@ class SimulationMixin:
 
     def setup_simulation_ui(self, control_layout):
         """构建仿真与辨识控制面板并加入 control_layout"""
+        self.contour_cmaps = {
+            7: "jet",       # 温度时空云图默认 jet
+            8: "viridis",   # 反应物浓度时空云图默认 viridis
+            9: "plasma",    # 反应速率时空云图默认 plasma
+            10: "inferno"   # 产热功率时空云图默认 inferno
+        }
+
         self.sim_frame = QGroupBox("热失控仿真与动力学参数辨识")
         self.sim_frame.setCheckable(False)
 
@@ -713,16 +743,24 @@ class SimulationMixin:
         self.sim_view_combo.currentIndexChanged.connect(self.on_sim_view_changed)
         post_grid.addWidget(self.sim_view_combo, 0, 1, 1, 2)
 
+        post_grid.addWidget(QLabel("云图色谱 Map:"), 1, 0)
+        self.sim_cmap_combo = QComboBox()
+        for cmap_key, cmap_label in SIM_COLORMAP_LIST:
+            self.sim_cmap_combo.addItem(cmap_label, cmap_key)
+        self.sim_cmap_combo.setEnabled(False)
+        self.sim_cmap_combo.currentIndexChanged.connect(self.on_sim_cmap_changed)
+        post_grid.addWidget(self.sim_cmap_combo, 1, 1, 1, 2)
+
         self.save_std_btn = QPushButton("保存仿真数据 (Excel)")
         self.save_std_btn.setEnabled(False)
         self.save_std_btn.clicked.connect(lambda: self.export_sim_excel(full_matrix=False))
-        post_grid.addWidget(self.save_std_btn, 1, 0, 1, 3)
+        post_grid.addWidget(self.save_std_btn, 2, 0, 1, 3)
 
         self.save_full_btn = QPushButton("保存完整云图矩阵数据 (Excel)")
         self.save_full_btn.setEnabled(False)
         self.save_full_btn.setStyleSheet("background-color: #8b5cf6; color: white;")
         self.save_full_btn.clicked.connect(lambda: self.export_sim_excel(full_matrix=True))
-        post_grid.addWidget(self.save_full_btn, 2, 0, 1, 3)
+        post_grid.addWidget(self.save_full_btn, 3, 0, 1, 3)
         sim_vlay.addWidget(post_box)
 
         sim_main_layout.addWidget(self.widget_sim_mode)
@@ -1445,11 +1483,35 @@ class SimulationMixin:
 
         self.on_sim_view_changed()
 
+    def on_sim_cmap_changed(self):
+        idx = self.sim_view_combo.currentIndex()
+        if idx in self.contour_cmaps:
+            new_cmap = self.sim_cmap_combo.currentData()
+            if new_cmap:
+                self.contour_cmaps[idx] = new_cmap
+                if self.sim_results is not None:
+                    self.on_sim_view_changed()
+
     def on_sim_view_changed(self):
+        idx = self.sim_view_combo.currentIndex()
+
+        # 联动云图色谱下拉框
+        if hasattr(self, 'sim_cmap_combo') and self.sim_cmap_combo is not None:
+            if idx in self.contour_cmaps:
+                self.sim_cmap_combo.setEnabled(True)
+                target_cmap = self.contour_cmaps[idx]
+                self.sim_cmap_combo.blockSignals(True)
+                for c_idx in range(self.sim_cmap_combo.count()):
+                    if self.sim_cmap_combo.itemData(c_idx) == target_cmap:
+                        self.sim_cmap_combo.setCurrentIndex(c_idx)
+                        break
+                self.sim_cmap_combo.blockSignals(False)
+            else:
+                self.sim_cmap_combo.setEnabled(False)
+
         if self.sim_results is None:
             return
 
-        idx = self.sim_view_combo.currentIndex()
         res = self.sim_results
 
         t_arr = res["t_arr"]
@@ -1630,7 +1692,8 @@ class SimulationMixin:
 
         elif idx == 7:
             ax = self.fig.add_subplot(111)
-            pcm = ax.pcolormesh(z_coords, t_arr, T_history, shading='gouraud', cmap='coolwarm')
+            cmap_name = self.contour_cmaps.get(7, "jet")
+            pcm = ax.pcolormesh(z_coords, t_arr, T_history, shading='gouraud', cmap=cmap_name)
             cbar = self.fig.colorbar(pcm, ax=ax, pad=0.02)
             cbar.set_label('温度 (°C)', fontsize=11)
             ax.axhline(th_end, color='white', linestyle='--', lw=1.5, alpha=0.9, label=f'{th_end:g}s 停热')
@@ -1643,7 +1706,7 @@ class SimulationMixin:
         elif idx in [8, 9, 10]:
             data_3d = c_history if idx == 8 else rate_history if idx == 9 else power_history
             cbar_label = '归一化浓度 (-)' if idx == 8 else '反应速率 (1/s)' if idx == 9 else '产热功率 (W)'
-            cmap_name = 'viridis' if idx in [8, 9] else 'inferno'
+            cmap_name = self.contour_cmaps.get(idx, 'jet')
             title_kind = '浓度' if idx == 8 else '反应速率' if idx == 9 else '产热功率'
 
             if n_rxns <= 1:
