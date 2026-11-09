@@ -207,7 +207,7 @@ DEFAULT_IDENT_REACTIONS = [
 
 # 仿真时空云图可选色彩映射方案 (ColorMap List)
 SIM_COLORMAP_LIST = [
-    ("jet", "jet (经典彩虹 / CFD与传热仿真标配)"),
+    ("jet", "jet (经典彩虹)"),
     ("turbo", "turbo (平滑高保真彩虹)"),
     ("coolwarm", "coolwarm (经典冷暖色 蓝-白-红)"),
     ("hot", "hot (热力图 黑-红-黄-白)"),
@@ -860,7 +860,13 @@ class SimulationMixin:
 
         tr_data_grid.addWidget(QLabel("环境温度 (°C):"), 3, 0)
         self.tr_amb_val_edit = QLineEdit("25.0")
-        tr_data_grid.addWidget(self.tr_amb_val_edit, 3, 1, 1, 3)
+        tr_data_grid.addWidget(self.tr_amb_val_edit, 3, 1)
+
+        tr_data_grid.addWidget(QLabel("辨识截止时间 (s):"), 3, 2)
+        self.tr_ident_tmax_edit = QLineEdit("")
+        self.tr_ident_tmax_edit.setPlaceholderText("留空自动覆盖全实验时序")
+        self.tr_ident_tmax_edit.setToolTip("辨识前向仿真截止时间 (s)；留空则默认 100% 完整覆盖导入实验数据的最大时间")
+        tr_data_grid.addWidget(self.tr_ident_tmax_edit, 3, 3)
         tr_id_lay.addWidget(tr_data_box)
 
         # 1D 辨识专属动力学参数与搜索上下限表格 (17列，包含 A 与 m 的独立搜索上下限)
@@ -1248,6 +1254,21 @@ class SimulationMixin:
     def reset_ident_reaction_defaults(self):
         self._populate_ident_rxn_table(DEFAULT_IDENT_REACTIONS)
         self.update_status("已恢复 1D TR 辨识默认 4 步副反应及其物理搜索上下限。")
+
+    def _backfill_ident_rxn_table(self, opt_rxns):
+        """将 1D TR 辨识得到的最优参数自动回填至辨识设置面板对应初值表格中 (保持名称与上下限设置不变)"""
+        if not opt_rxns:
+            return
+        row_cnt = self.ident_rxn_table.rowCount()
+        for r_idx, r in enumerate(opt_rxns):
+            if r_idx < row_cnt:
+                # 仅更新初值列: Col 1(A), Col 2(Ea), Col 3(H), Col 4(n), Col 5(m), Col 6(c0)
+                self.ident_rxn_table.setItem(r_idx, 1, QTableWidgetItem(f"{float(r.get('A', 1e8)):.6e}"))
+                self.ident_rxn_table.setItem(r_idx, 2, QTableWidgetItem(f"{float(r.get('Ea', 1e5)):.2f}"))
+                self.ident_rxn_table.setItem(r_idx, 3, QTableWidgetItem(f"{float(r.get('H', 100.0)):.3f}"))
+                self.ident_rxn_table.setItem(r_idx, 4, QTableWidgetItem(f"{float(r.get('n', 1.0)):.3f}"))
+                self.ident_rxn_table.setItem(r_idx, 5, QTableWidgetItem(f"{float(r.get('m', 0.0)):.3f}"))
+                self.ident_rxn_table.setItem(r_idx, 6, QTableWidgetItem(f"{float(r.get('c0', 1.0)):.3f}"))
 
     def get_current_sim_params(self):
         ctrl = {}
@@ -1915,6 +1936,11 @@ class SimulationMixin:
         n_workers = int(self.tr_ident_workers_edit.text().strip() or "8")
         dt_ident = float(self.sim_ctrl_inputs.get("dt", QLineEdit("0.5")).text().strip() or "0.5")
         T_amb_val = float(self.tr_amb_val_edit.text().strip() or "25.0")
+        ident_tmax_str = self.tr_ident_tmax_edit.text().strip() if hasattr(self, "tr_ident_tmax_edit") else ""
+        try:
+            ident_tmax = float(ident_tmax_str) if ident_tmax_str else 0.0
+        except ValueError:
+            ident_tmax = 0.0
 
         ident_config = {
             "geometry": sim_params["geometry"],
@@ -1925,6 +1951,7 @@ class SimulationMixin:
                 "target_pos_mode": target_pos_mode,
                 "reactions": ident_rxns,
                 "dt": dt_ident,
+                "ident_t_max": ident_tmax,
                 "n_workers": n_workers,
                 "n_particles": n_particles,
                 "max_iter": max_iter,
@@ -1992,8 +2019,12 @@ class SimulationMixin:
         self.tr_id_apply_btn.setEnabled(True)
         self.tr_id_save_btn.setEnabled(True)
 
+        # 自动将辨识出的最优参数回填至参数辨识设置面板对应的初值框中
+        opt_rxns = res.get("opt_reactions", [])
+        self._backfill_ident_rxn_table(opt_rxns)
+
         self.update_status("="*50)
-        self.update_status(f"[辨识成功] 1D TR 最优参数求解完成！正在右侧主画布渲染实验对标图...")
+        self.update_status("[辨识成功] 1D TR 最优参数求解完成！已自动回填至辨识设置面板，正在渲染实验对标图...")
         self.update_status("="*50)
 
         # 绘制对标曲线图
@@ -2016,8 +2047,8 @@ class SimulationMixin:
         if "均温" not in target_name:
             ax.plot(t_arr, T_sim_mean, color='#7f7f7f', lw=1.6, linestyle='-.', alpha=0.85, label='1D 仿真全域均温 $T_{mean}$')
 
-        # 绘制实验实测数据
-        stride_exp = max(1, len(t_exp) // 120)
+        # 绘制实验实测数据 (控制在 150~200 个散点，均匀平滑分布且杜绝卡顿)
+        stride_exp = max(1, len(t_exp) // 180)
         ax.plot(t_exp[::stride_exp], T_exp[::stride_exp], 'o', ms=3.5, color='#d62728', alpha=0.85, label='实验实测温度')
         ax.plot(t_arr, res["T_exp_interp"], color='#d62728', lw=1.6, linestyle='--', alpha=0.7)
 
@@ -2045,7 +2076,10 @@ class SimulationMixin:
         ax.set_title(f'1D 热失控动力学参数辨识结果对标 ({target_name} vs. 实验实测)', fontsize=13, fontweight='bold', pad=10)
         ax.set_xlabel('时间 Time (s)', fontsize=11)
         ax.set_ylabel('温度 Temperature (°C)', fontsize=11)
-        ax.set_xlim(0, t_arr[-1])
+        
+        # 完整覆盖仿真和实验的最大时间范围，防止截断
+        x_limit_max = max(float(t_arr[-1]), float(np.nanmax(t_exp)) if len(t_exp) > 0 else float(t_arr[-1]))
+        ax.set_xlim(0, max(1.0, x_limit_max))
         y_max = max(650.0, np.ceil(max(np.max(T_sim_target), np.max(T_exp)) / 50.0) * 50.0)
         ax.set_ylim(0, y_max)
         ax.grid(True, linestyle='--', alpha=0.5)
@@ -2422,6 +2456,18 @@ class SimulationMixin:
                     if any(k in cl for k in ['tmean', 'mean', 'mid', 'center', 'temp', '温度']):
                         self.tr_temp_col_combo.setCurrentIndex(i)
                         break
+
+                # 动态解析时间序列长度并更新截止时间输入框提示
+                try:
+                    t_col_name = self.tr_time_col_combo.currentText()
+                    if t_col_name in df.columns:
+                        t_vals = pd.to_numeric(df[t_col_name], errors='coerce').dropna().to_numpy()
+                        t_vals = t_vals[t_vals >= 0]
+                        if len(t_vals) > 0 and hasattr(self, "tr_ident_tmax_edit"):
+                            t_max_found = float(np.nanmax(t_vals))
+                            self.tr_ident_tmax_edit.setPlaceholderText(f"留空全时序 (全长 {t_max_found:.0f}s)")
+                except Exception:
+                    pass
             else:
                 self.current_ident_df_arc = df
                 self.arc_time_combo.clear()

@@ -268,8 +268,14 @@ class TR1DIdentifyWorker(QThread):
             # 1. 解析目标测点位置与实验数据
             t_exp = np.array(ident_cfg["t_exp"], dtype=np.float64)
             T_exp = np.array(ident_cfg["T_exp"], dtype=np.float64)
-            t_max_exp = float(t_exp[-1]) if len(t_exp) > 0 else 3600.0
-            t_max = min(float(ctrl_raw.get("t_max", 3600.0)), t_max_exp)
+            t_max_exp = float(np.nanmax(t_exp)) if len(t_exp) > 0 else 3600.0
+            
+            # 辨识总时长以真实实验数据最大时间为准，防止被正向仿真控制面板中的 t_max (例如用户测试填写的 20s) 截断
+            user_ident_tmax = float(ident_cfg.get("ident_t_max", 0.0))
+            if user_ident_tmax > 0.0:
+                t_max = min(user_ident_tmax, t_max_exp)
+            else:
+                t_max = t_max_exp
             
             # 允许在辨识时独立配置宏观步长 dt
             dt = float(ident_cfg.get("dt", ctrl_raw.get("dt", 0.5)))
