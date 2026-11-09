@@ -1399,6 +1399,7 @@ class SimulationMixin:
         self.save_std_btn.setEnabled(False)
         self.save_full_btn.setEnabled(False)
 
+        self.sim_results = None
         self.reset_summary_card(computing=True)
 
         self.update_status("="*50)
@@ -1415,7 +1416,8 @@ class SimulationMixin:
     def _on_simulation_worker_finished(self):
         self.sim_run_btn.setEnabled(True)
         self.sim_stop_btn.setEnabled(False)
-        self.reset_summary_card(computing=False)
+        if self.sim_results is None:
+            self.reset_summary_card(computing=False)
 
     def stop_simulation(self):
         if self.sim_worker and self.sim_worker.isRunning():
@@ -1867,6 +1869,15 @@ class SimulationMixin:
             }
         }
 
+        # 如果上一次的辨识 worker 仍在运行，做安全清理
+        if self.tr_id_worker and self.tr_id_worker.isRunning():
+            try:
+                self.tr_id_worker.cancel()
+                self.tr_id_worker.terminate()
+                self.tr_id_worker.wait(150)
+            except Exception:
+                pass
+
         self.tr_id_run_btn.setEnabled(False)
         self.tr_id_stop_btn.setEnabled(True)
         self.tr_id_apply_btn.setEnabled(False)
@@ -1892,8 +1903,20 @@ class SimulationMixin:
             self.tr_id_stop_btn.setEnabled(False)
             self.update_status("[中止] 正在请求终止 1D TR 辨识进程，请稍候...")
             self.tr_id_worker.cancel()
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(600, self._force_check_tr_identify_stopped)
         else:
             self._on_tr_identify_worker_finished()
+
+    def _force_check_tr_identify_stopped(self):
+        if self.tr_id_worker and self.tr_id_worker.isRunning():
+            try:
+                self.tr_id_worker.terminate()
+                self.tr_id_worker.wait(100)
+            except Exception:
+                pass
+        self._on_tr_identify_worker_finished()
+        self.update_status("[中止] 1D TR 辨识进程已安全退出，可以重新开始辨识。")
 
     def on_tr_identify_error(self, err):
         self.update_status(err)

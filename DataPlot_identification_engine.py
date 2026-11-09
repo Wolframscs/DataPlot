@@ -249,11 +249,13 @@ class TR1DIdentifyWorker(QThread):
 
     def cancel(self):
         self._is_cancelled = True
-        if self.pool is not None:
+        p = self.pool
+        if p is not None:
             try:
-                self.pool.terminate()
+                p.terminate()
             except Exception:
                 pass
+            self.pool = None
 
     def run(self):
         self.pool = None
@@ -397,11 +399,33 @@ class TR1DIdentifyWorker(QThread):
                 self.pool = ctx.Pool(processes=cpu_cores)
                 
                 def eval_batch_pso(X_mat):
-                    if self._is_cancelled:
+                    if self._is_cancelled or self.pool is None:
                         return np.full(len(X_mat), 1e9, dtype=np.float64)
                     tasks = [(X_mat[k], static_meta) for k in range(len(X_mat))]
-                    fits = self.pool.map(_evaluate_1d_simulation_single_particle, tasks, chunksize=1)
-                    return np.array(fits, dtype=np.float64)
+                    try:
+                        async_res = self.pool.map_async(_evaluate_1d_simulation_single_particle, tasks, chunksize=1)
+                        while not async_res.ready():
+                            if self._is_cancelled or self.pool is None:
+                                if self.pool is not None:
+                                    try:
+                                        self.pool.terminate()
+                                    except Exception:
+                                        pass
+                                    self.pool = None
+                                return np.full(len(X_mat), 1e9, dtype=np.float64)
+                            async_res.wait(timeout=0.05)
+                        if self._is_cancelled or self.pool is None:
+                            if self.pool is not None:
+                                try:
+                                    self.pool.terminate()
+                                except Exception:
+                                    pass
+                                self.pool = None
+                            return np.full(len(X_mat), 1e9, dtype=np.float64)
+                        fits = async_res.get(timeout=2.0)
+                        return np.array(fits, dtype=np.float64)
+                    except Exception:
+                        return np.full(len(X_mat), 1e9, dtype=np.float64)
                 
                 pso_eval_func = None
                 pso_batch_eval = eval_batch_pso
@@ -436,7 +460,6 @@ class TR1DIdentifyWorker(QThread):
                     if self.pool is not None:
                         try:
                             self.pool.terminate()
-                            self.pool.join()
                         except Exception:
                             pass
                         self.pool = None
@@ -445,6 +468,12 @@ class TR1DIdentifyWorker(QThread):
                 best_x, best_fit = pso.optimize_step(step)
                 if self._is_cancelled:
                     self.progress_signal.emit("[中止] 1D TR 辨识已由用户中止。")
+                    if self.pool is not None:
+                        try:
+                            self.pool.terminate()
+                        except Exception:
+                            pass
+                        self.pool = None
                     return
 
                 elapsed_iter = time.perf_counter() - t_start
@@ -453,7 +482,7 @@ class TR1DIdentifyWorker(QThread):
                     f"当前最优适应度={best_fit:.4f} | 耗时={elapsed_iter:.1f}s"
                 )
 
-            # 关闭进程池
+            # 正常辨识完成，安全关闭进程池
             if self.pool is not None:
                 try:
                     self.pool.close()
@@ -611,7 +640,6 @@ class TR1DIdentifyWorker(QThread):
             if self.pool is not None:
                 try:
                     self.pool.terminate()
-                    self.pool.join()
                 except Exception:
                     pass
                 self.pool = None
