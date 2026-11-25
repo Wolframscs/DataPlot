@@ -201,4 +201,30 @@ $$V_{\text{grid}} = \text{np.linspace}(V_{\min}, V_{\max}, N_{\text{pts}}) \quad
 
 
 
+### 一、新增与修改模块清单
+
+| 文件 | 作用 |
+|---|---|
+| [DataPlot_hgp_engine.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_hgp_engine.py) | 无状态配置驱动（`HGPConfig`）的电-热耦合引擎：完整覆盖 `CC`、`CV`、`CC_CMap`、`CC_NegRef`、`CC_CProfile`、`CC_PProfile`、`DC`、`DC_CProfile`、`DC_PProfile`、`Rest` 全部模式与多圈循环、SOH/内阻老化、0D 集总水冷滞回/空冷模型，并单独输出不可逆热 `HGP`、可逆熵热 `Q_rev` 与总产热 `HGP_dUdT` |
+| [DataPlot_normmodel_engine.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_normmodel_engine.py) | 可选第 2 种电压模型：NASA NDARC 归一化电池模型（含温度依赖） |
+| [DataPlot_fvm3d_engine.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_fvm3d_engine.py) | 3D 单元中心 FVM 瞬态导热求解器：正交各向异性导热（$k_x, k_y, k_z$）、六面独立边界条件（对流/定温/热流/绝热）、零新增依赖的纯 NumPy 无矩阵 7 点 Jacobi-PCG（及可选 SciPy 稀疏缓存 LU 直接求解）；提供双向耦合步进器 `FVM3DThermalStepper`（支持底面水冷滞回与多测点温度反馈）以及外部功率表 `Power.xlsx` / 恒定功率独立求解接口 |
+| [DataPlot_fvm3d_post.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_fvm3d_post.py) | 纯 NumPy 向量化三线性插值与嵌入式 Qt/Matplotlib 3D CAE 实体云图、内部正交剖切三联图、六表面 2x3 展开云图及 ParaView `.vtk` 导出 |
+| [DataPlot_ecthermal_gui.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_ecthermal_gui.py) | GUI Mixin 与后台 `ECThermalWorker`：支持 HGP 0D/3D 耦合与外部产热表驱动切换、多阶段工况编辑器与 4 套常用预设、六面边界编辑表、6 种后处理视图、18 种色谱 Map、3D 快照时间滑条及 Excel / VTK 导出 |
+| [DataPlot_simulation.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_simulation.py) / [DataPlot_app_gui.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_app_gui.py) / [DataPlot_gui_exe.py](file:///e:/Antigravity/DataPlot/DataPlot_QT/DataPlot_gui_exe.py) | 在“模型与计算模式选择”下拉框中新增第 4 项 **`电芯电-热耦合仿真 (HGP 0D / 3D FVM)`**，并同步更新 PyInstaller `hidden-import`、[setup.iss](file:///e:/Antigravity/DataPlot/DataPlot_QT/setup.iss) 与 [CHANGELOG.md](file:///e:/Antigravity/DataPlot/DataPlot_QT/CHANGELOG.md) |
+
+---
+
+### 二、数值精度与端到端验证结果
+
+1. **HGP 0D 引擎 vs 原 `HGP_Output_Data.xlsx`（5 圈，38,967 行，耗时 3.66 s）**：
+   - `SOC`、`Current`、`Voltage`、`HGP`、`HGP_dUdT`、`T_calc` 最大相对误差均 $< 3 \times 10^{-16}$（机器精度级一致）。
+2. **3D FVM 能量守恒与 32,000 单元算例对标 `analysis_fvm.md`**：
+   - 1×1×1 绝热校验：末温 `30.00000000 °C`（理论值 `30.00000000 °C`，误差 `0.00e+00`）。
+   - 40×20×40 + `Power.xlsx`（600 s，42 步，纯 NumPy Jacobi-PCG）：耗时 **0.61 s**（比原 pypardiso 4.40 s 快约 7 倍），`T_avg = 63.39 °C`（基准 `63.39 °C`），`T_max = 67.41 °C`（基准 `67.41 °C`）。
+3. **0D vs 3D 双向耦合大导热极限校验**：
+   - $k = 5000\ \text{W/(m}\cdot\text{K)}$ 时，0D 末温 `30.6207 °C`，3D 体积均温 `30.6217 °C`，偏差仅 `0.0010 °C`。
+4. **端到端编译与无头 GUI 冒烟测试**：
+   - 8 个 Python 模块编译通过；`CC_NegRef + CV + Rest + DC` 3D 耦合、NASA 归一化模型、全部 6 个后处理视图渲染及 VTK 导出均通过测试（退出码 0）。
+
+如需现在执行 PyInstaller 打包并发布 **`v2.1.0`** 到 GitHub Release，告诉我一声即可立即执行。
 

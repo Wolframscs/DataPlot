@@ -4,6 +4,23 @@
 
 ---
 
+## [v2.1.0] - 2026-11-25
+
+### 1. 新增电芯电-热耦合仿真模块（HGP 产热 + 0D / 3D FVM 热模型）
+- **完整集成 HGP 多阶段/多循环电-热耦合引擎**（`DataPlot_hgp_engine.py`）：
+  - 完整覆盖全部充放电与静置驱动方式：恒倍率充电（`CC`）、恒压充电（`CV`）、二维温度-SOC 查表快充（`CC_CMap`）、恒负参防析锂快充（`CC_NegRef`）、电流时序充电（`CC_CProfile`）、功率时序充电（`CC_PProfile`）、恒倍率放电（`DC`）、双向电流/功率放电（`DC_CProfile` / `DC_PProfile`，含能量回收）、静置弛豫（`Rest`），以及任意阶段序列组合与 $N$ 圈循环；
+  - 支持双电压模型切换：倍率-SOC 双向查表模型（含一阶电压弛豫滤波、SOH 容量衰减与内阻增长）与 NASA NDARC 归一化电池模型（`DataPlot_normmodel_engine.py`，含温度依赖）；
+  - 完整输出不可逆产热 $Q_{\text{irr}}$（`HGP`）、可逆熵热 $Q_{\text{rev}}$ 与总产热 $Q_{\text{tot}}$（`HGP_dUdT`）。
+- **完整集成 3D FVM 瞬态导热求解器**（`DataPlot_fvm3d_engine.py`、`DataPlot_fvm3d_post.py`）：
+  - 支持 0D 集总单节点模型（含底面水冷 35°C/30°C 滞回策略与空冷模式）与 3D 单元中心型 FVM 瞬态导热模型（正交各向异性导热 $k_x, k_y, k_z$、六面独立边界条件：对流/定温/热流/绝热、可选底面水冷滞回与多测点温度反馈）自由切换；
+  - 支持“外部产热功率表（`Power.xlsx`）/ 恒定功率”直接驱动 3D FVM 瞬态计算；
+  - 默认内置零额外依赖的纯 NumPy 无矩阵 7 点 Jacobi-PCG 求解器（32,000 单元 600s 仅需约 0.6s），同时兼容可选 SciPy 稀疏 LU 缓存直接求解。
+- **嵌入式后处理与数据导出**（`DataPlot_ecthermal_gui.py`）：
+  - 新增 2x3 电-热综合曲线图、产热分量分解图、3D 温度统计与 CAE 实体云图总览、3D 内部正交剖切三联图、六表面温度展开云图及空间温差演化曲线；
+  - 支持 3D 时刻快照滑条回放、18 种色谱 Map 实时切换、Excel（`CycleOut` / `CycleSummary` / `Thermal3D_Stats`）导出及 ParaView 兼容 `.vtk` 导出。
+
+---
+
 ## [v2.0.4] - 2026-11-09
 
 ### 1. 1D TR 参数辨识最优动力学参数自动回填体系

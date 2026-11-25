@@ -2,7 +2,7 @@
 ; 使用前请下载并安装 Inno Setup (推荐版本 6.x)
 
 #define MyAppName "DataPlot"
-#define MyAppVersion "2.0.4"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Company"
 #define MyAppExeName "DataPlot.exe"
 

@@ -38,6 +38,7 @@ from DataPlot_plot_engine import PlotEngineMixin
 from DataPlot_excel_exporter import ExcelExporterMixin
 from DataPlot_settings_manager import SettingsMixin
 from DataPlot_simulation import SimulationMixin
+from DataPlot_ecthermal_gui import ECThermalMixin
 
 def resource_path(relative_path):
     """ 获取资源的绝对路径，兼容开发环境与PyInstaller打包后的环境 """
@@ -507,10 +508,10 @@ class CanvasResizeFilter(QObject):
     def eventFilter(self, obj, event):
         return super().eventFilter(obj, event)
 
-class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin, SimulationMixin):
+class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin, ExcelExporterMixin, SettingsMixin, SimulationMixin, ECThermalMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DataPlot v2.0.4")
+        self.setWindowTitle("DataPlot v2.1.0")
         
         icon_path = resource_path('icon.ico')
         if os.path.exists(icon_path):
@@ -564,7 +565,7 @@ class PlotterGUI(QMainWindow, DataLoaderMixin, BatteryMathMixin, PlotEngineMixin
         self.marker_size_var = Var("5")
         self.markevery_var = Var("1")
         
-        self.version = "2.0.4"
+        self.version = "2.1.0"
         self._update_timer = None
         self._last_plot_time = 0
         self._is_loading_settings = False

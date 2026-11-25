@@ -491,7 +491,8 @@ class SimulationMixin:
         self.sim_mode_combo.addItems([
             "1D 热失控仿真计算 (1D TR Simulation)",
             "1D 热失控动力学参数辨识 (1D TR Multi-Reaction )",
-            "ARC 热失控动力学参数辨识 (ARC 1-Equation )"
+            "ARC 热失控动力学参数辨识 (ARC 1-Equation )",
+            "电芯电-热耦合仿真 (HGP 0D / 3D FVM)"
         ])
         self.sim_mode_combo.setStyleSheet("font-weight: bold; color: #1e3a8a;")
         self.sim_mode_combo.currentIndexChanged.connect(self.on_sim_mode_changed)
@@ -1104,9 +1105,16 @@ class SimulationMixin:
         arc_id_lay.addWidget(arc_opt_box)
         sim_main_layout.addWidget(self.widget_arc_ident_mode)
 
+        # ======================================================================
+        # 模式 4: 电芯电-热耦合仿真 (HGP 产热 + 0D 集总 / 3D FVM 瞬态导热)
+        # ======================================================================
+        self.widget_ecthermal_mode = self._build_ecthermal_panel()
+        sim_main_layout.addWidget(self.widget_ecthermal_mode)
+
         # 初始视图状态切换
         self.widget_tr_ident_mode.setVisible(False)
         self.widget_arc_ident_mode.setVisible(False)
+        self.widget_ecthermal_mode.setVisible(False)
         self.sim_frame.setVisible(False)
         control_layout.addWidget(self.sim_frame)
 
@@ -1132,6 +1140,7 @@ class SimulationMixin:
             self.widget_sim_mode.setVisible(True)
             self.widget_tr_ident_mode.setVisible(False)
             self.widget_arc_ident_mode.setVisible(False)
+            self.widget_ecthermal_mode.setVisible(False)
         elif idx == 1:
             # 1D TR 动力学参数辨识
             self.shared_geom_box.setVisible(True)
@@ -1139,6 +1148,7 @@ class SimulationMixin:
             self.widget_sim_mode.setVisible(False)
             self.widget_tr_ident_mode.setVisible(True)
             self.widget_arc_ident_mode.setVisible(False)
+            self.widget_ecthermal_mode.setVisible(False)
         elif idx == 2:
             # ARC 热失控动力学参数辨识
             self.shared_geom_box.setVisible(False)
@@ -1146,6 +1156,15 @@ class SimulationMixin:
             self.widget_sim_mode.setVisible(False)
             self.widget_tr_ident_mode.setVisible(False)
             self.widget_arc_ident_mode.setVisible(True)
+            self.widget_ecthermal_mode.setVisible(False)
+        elif idx == 3:
+            # 电芯电-热耦合仿真 (HGP 0D / 3D FVM)
+            self.shared_geom_box.setVisible(False)
+            self.shared_ctrl_box.setVisible(False)
+            self.widget_sim_mode.setVisible(False)
+            self.widget_tr_ident_mode.setVisible(False)
+            self.widget_arc_ident_mode.setVisible(False)
+            self.widget_ecthermal_mode.setVisible(True)
 
     # --------------------------------------------------------------------------
     # 仿真表格增删与填充辅助
